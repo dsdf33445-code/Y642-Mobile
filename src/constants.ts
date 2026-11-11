@@ -1,42 +1,65 @@
-export const CONTRACTOR_OPTIONS = ['協茂', '正紳', '勝濱', '中宏'];
+// src/constants.ts
+// ============================================================================
+// 系統常數與多合約資料庫設定檔
+// 可在此新增或修改不同合約對應的 GitHub Excel 檔案網址 (Raw URL)
+// ============================================================================
 
-// 新增：人員角色選項
-export const USER_ROLES = [
-  '承辦人',
-  '股長', 
-  '帶班者', 
-  '安衛管理人員', 
-  '工地負責人'
+import { ContractConfig } from './types';
+
+/**
+ * 多重合約資料庫清單
+ * 說明：
+ * 1. 將 Excel (.xlsx) 或 CSV 上傳至 GitHub 儲存庫後，複製其 Raw 網址填入 githubExcelUrl。
+ * 2. 轉換公式：https://raw.githubusercontent.com/<GitHub帳號>/<Repo名稱>/<分支名稱>/<檔案路徑>.xlsx
+ * 3. 若處於離線或尚未替換網址時，系統會自動退回讀取 public/products.csv 作為備援資料。
+ */
+export const CONTRACT_DATABASES: ContractConfig[] = [
+  {
+    id: 'contract-default',
+    name: '協茂',
+    contractCode: 'STD-01',
+    // 可替換為您的 GitHub Excel Raw URL，未設定遠端網址時預設讀取 public/products.csv
+    githubExcelUrl: '/products.csv',
+    fallbackLocalUrl: '/products.csv',
+  },
+  {
+    id: 'contract-electrical-2026',
+    name: '機電暨儀控設備維護合約 (GitHub Excel A)',
+    contractCode: 'ELEC-115',
+    // 請將下方網址改為您 GitHub 儲存庫中對應合約 A 的 .xlsx Raw 網址
+    githubExcelUrl:
+      import.meta.env.VITE_GITHUB_EXCEL_URL_A ||
+      'https://raw.githubusercontent.com/your-org/mobile-mo-data/main/contracts/electrical_contract.xlsx',
+    fallbackLocalUrl: '/products.csv',
+  },
+  {
+    id: 'contract-piping-2026',
+    name: '管線與零星修繕工程合約 (GitHub Excel B)',
+    contractCode: 'PIPE-115',
+    // 請將下方網址改為您 GitHub 儲存庫中對應合約 B 的 .xlsx Raw 網址
+    githubExcelUrl:
+      import.meta.env.VITE_GITHUB_EXCEL_URL_B ||
+      'https://raw.githubusercontent.com/your-org/mobile-mo-data/main/contracts/piping_contract.xlsx',
+    fallbackLocalUrl: '/products.csv',
+  },
+  {
+    id: 'contract-civil-2026',
+    name: '廠務空調與土木修繕合約 (GitHub Excel C)',
+    contractCode: 'CIVIL-115',
+    // 請將下方網址改為您 GitHub 儲存庫中對應合約 C 的 .xlsx Raw 網址
+    githubExcelUrl:
+      import.meta.env.VITE_GITHUB_EXCEL_URL_C ||
+      'https://raw.githubusercontent.com/your-org/mobile-mo-data/main/contracts/civil_contract.xlsx',
+    fallbackLocalUrl: '/products.csv',
+  },
 ];
 
-export const SAFETY_CHECK_ITEMS = [
-  "1. 每日施工前應先洽中鋼承辦人並向轄區單位申請安全工作許可證，獲核准後始得開始施工。",
-  "2. 進入施工工地應配戴安全帽，並扣好帽帶。穿合格安全皮鞋，嚴禁穿拖鞋。衣服要塞入褲內。",
-  "3. 二公尺以上之高處作業，應繫好安全帶與做好防墜落措施。",
-  "4. 侷限空間內作業應先通風及測定CO與氧氣濃度，工作人員應攜帶可燃性氣體警報器。",
-  "5. 動火作業應配置滅火器及監火員，並作好防止火花飛濺裝置。",
-  "6. 不可活電作業。停電作業時應由中鋼人員斷電後，驗電掛卡與上鎖。",
-  "7. 近電作業先做好防護措施，並經中鋼公司人員確認後，方允施工。",
-  "8. 送電前檢送完工測試報告，由中鋼承辦人員辦理送電申請。",
-  "9. 天車上、天車旁及其軌道，高溫區與工場活線區施工，會同中鋼承辦人員協調現場。",
-  "10. 廠內開關、儀器、閥類、管線等設備不得碰撞，並禁止擅自操作。",
-  "11. 非施工區域，不得擅入。",
-  "12. 施工用臨時電、氣體、水等須先申請核准。",
-  "13. 電焊機使用前須先自行檢查合格，且合格證於有效期限壹個月內。",
-  "14. 工作場所隨時整頓清潔，非吸煙區及工作中禁止吸煙。",
-  "15. 禁止女工及未滿二十歲或已逾五十歲之男工從事高架作業。",
-  "16. 從事起重機、堆高機、焊接及切除人員，必需經訓練合格及取得證書者。",
-  "17. 已充氣或空的氣體鋼瓶應分開存放，並置於陰涼處。",
-  "18. 孔洞應設置安全措施(圍欄或護蓋)及安全警告標語，以防止墬落。",
-  "19. 未經許可勿將他人設置之危險標誌移走。",
-  "20. 從事特殊工作須使用防護具 (請於下方備註填寫)",
-];
-
-// 修改：調整簽名欄位順序 (承辦人 -> 股長 -> 帶班者 -> 安衛 -> 工地負責人)
-export const SIGNATURE_ROLES = [
-  { id: 'organizer', label: '承辦人' },
-  { id: 'section_chief', label: '股長' },
-  { id: 'shift_leader', label: '帶班者' },
-  { id: 'safety_officer', label: '安衛管理人員' },
-  { id: 'site_manager', label: '工地負責人' }
-];
+/**
+ * 本地儲存 (LocalStorage) 的 Key 常數定義
+ */
+export const STORAGE_KEYS = {
+  /** 儲存目前登入者資訊 */
+  CURRENT_USER: 'mobile_mo_current_user_v2',
+  /** 本地端工令備援快取（依 ownerId 隔離） */
+  WORK_ORDERS_PREFIX: 'mobile_mo_work_orders_v2_',
+};
