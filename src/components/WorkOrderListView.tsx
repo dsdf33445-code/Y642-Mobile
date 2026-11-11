@@ -4,7 +4,8 @@
 // 功能：顯示登入者個人的工令清單、快速搜尋、建立新工令、切換狀態、進入工令明細
 // ============================================================================
 
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo, memo } from 'react';
+import type { FC, FormEvent } from 'react';
 import {
   Plus,
   Search,
@@ -16,7 +17,7 @@ import {
   Database,
   MapPin,
 } from 'lucide-react';
-import { WorkOrder, ContractConfig } from '../types';
+import type { WorkOrder, ContractConfig } from '../types';
 
 interface WorkOrderListViewProps {
   /** 目前登入者專屬的工令清單 */
@@ -40,7 +41,7 @@ interface WorkOrderListViewProps {
   onToggleStatus: (order: WorkOrder) => void;
 }
 
-export const WorkOrderListView: React.FC<WorkOrderListViewProps> = React.memo(
+export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
   ({
     workOrders,
     selectedOrderId,
@@ -70,7 +71,7 @@ export const WorkOrderListView: React.FC<WorkOrderListViewProps> = React.memo(
       return map;
     }, [contracts]);
 
-    // 使用 useMemo 快取篩選後的工令列表，提升行動端滑動與輸入流暢度
+    // 使用 useMemo 快取篩選後的工令列表
     const filteredOrders = useMemo(() => {
       const kw = searchTerm.trim().toLowerCase();
       return workOrders.filter((order) => {
@@ -102,7 +103,7 @@ export const WorkOrderListView: React.FC<WorkOrderListViewProps> = React.memo(
     }, [workOrders]);
 
     // 處理建立新工令表單送出
-    const handleCreateSubmit = (e: React.FormEvent) => {
+    const handleCreateSubmit = (e: FormEvent) => {
       e.preventDefault();
       if (!woNumber.trim() || !title.trim()) return;
 
@@ -113,7 +114,6 @@ export const WorkOrderListView: React.FC<WorkOrderListViewProps> = React.memo(
         contractId,
       });
 
-      // 重置表單並關閉視窗
       setWoNumber('');
       setTitle('');
       setLocation('');
@@ -214,12 +214,10 @@ export const WorkOrderListView: React.FC<WorkOrderListViewProps> = React.memo(
                   <div className="flex items-start justify-between gap-3">
                     <div className="space-y-1 flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        {/* 工令編號標籤 */}
                         <span className="font-mono text-xs font-bold px-2 py-0.5 bg-slate-100 text-slate-800 rounded-md border border-slate-200">
                           {order.woNumber}
                         </span>
 
-                        {/* 狀態切換膠囊按鈕 */}
                         <button
                           type="button"
                           onClick={(e) => {
@@ -240,19 +238,16 @@ export const WorkOrderListView: React.FC<WorkOrderListViewProps> = React.memo(
                           {order.status}
                         </button>
 
-                        {/* 所屬合約資料庫標籤 */}
                         <span className="inline-flex items-center gap-1 text-[11px] text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md">
                           <Database className="w-3 h-3" />
                           {contractInfo ? contractInfo.name : '預設合約'}
                         </span>
                       </div>
 
-                      {/* 工令標題 */}
                       <h3 className="font-bold text-slate-800 text-base truncate pt-0.5">
                         {order.title}
                       </h3>
 
-                      {/* 地點與更新日期 */}
                       <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
                         {order.location && (
                           <span className="inline-flex items-center gap-1">
@@ -267,7 +262,6 @@ export const WorkOrderListView: React.FC<WorkOrderListViewProps> = React.memo(
                       </div>
                     </div>
 
-                    {/* 右側金額與操作按鈕 */}
                     <div className="flex flex-col items-end justify-between self-stretch shrink-0">
                       <div className="text-right">
                         <div className="text-[11px] text-slate-400">工令總額</div>

@@ -1,12 +1,13 @@
 // src/components/BottomNavigation.tsx
 // ============================================================================
 // 底部導覽列組件
-// 僅保留「工令管理」與「工令明細」兩大核心功能，已移除「協議書」分頁
+// 僅保留「工令管理」與「工令明細」兩大功能，並符合 TypeScript 嚴格匯入規範
 // ============================================================================
 
-import React from 'react';
+import { memo } from 'react';
+import type { FC } from 'react';
 import { ClipboardList, FileSpreadsheet } from 'lucide-react';
-import { ActiveTab } from '../types';
+import type { ActiveTab } from '../types';
 
 interface BottomNavigationProps {
   /** 目前啟用的分頁 */
@@ -17,7 +18,7 @@ interface BottomNavigationProps {
   currentMoCount: number;
 }
 
-export const BottomNavigation: React.FC<BottomNavigationProps> = React.memo(
+export const BottomNavigation: FC<BottomNavigationProps> = memo(
   ({ activeTab, onTabChange, currentMoCount }) => {
     return (
       <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200 shadow-[0_-2px_10px_rgba(0,0,0,0.04)] pb-safe">

@@ -1,16 +1,17 @@
 // src/App.tsx
 // ============================================================================
 // Mobile-MO 行動工令管理系統主程式
-// 1. 直接串接 src/firebase.ts 的 auth 與 provider (GoogleAuthProvider) 進行個人帳號驗證
-// 2. 保留：工令管理、工令明細、個人帳號資料區分（不同登入者只會看到自己建立的工令）
-// 3. 刪除：協議書分頁、右上角設定按鈕（人員分類、簽章、登出）
-// 4. 新增：MO 明細可選擇其他合約（對應不同資料庫，讀取 GitHub 裡的 Excel）
+// 修復重點：
+// 1. 移除未在執行期呼叫的預設 import React，改用 import type { FC, FormEvent }，
+//    解決 tsconfig.app.json 的 TS6133 / TS1484 編譯錯誤
+// 2. 保留工令管理、工令明細與個人帳號資料隔離；移除協議書分頁與右上角設定按鈕
 // ============================================================================
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import type { FC, FormEvent } from 'react';
 import { onAuthStateChanged, signInWithPopup } from 'firebase/auth';
 import { Wrench, UserCheck, LogIn } from 'lucide-react';
-import { ActiveTab, UserProfile, WorkOrder } from './types';
+import type { ActiveTab, UserProfile, WorkOrder } from './types';
 import { CONTRACT_DATABASES, STORAGE_KEYS } from './constants';
 import {
   auth,
@@ -23,7 +24,7 @@ import { WorkOrderListView } from './components/WorkOrderListView';
 import { MoDetailView } from './components/MoDetailView';
 import { BottomNavigation } from './components/BottomNavigation';
 
-export const App: React.FC = () => {
+export const App: FC = () => {
   // 1. 登入者狀態：優先讀取本地儲存或由 Firebase Auth onAuthStateChanged 自動帶入
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
     try {
@@ -97,7 +98,7 @@ export const App: React.FC = () => {
     [workOrders, selectedOrderId]
   );
 
-  // 使用 Google 帳號登入（串接 firebase.ts 的 auth 與 provider）
+  // 使用 Google 帳號登入
   const handleGoogleLogin = async () => {
     setLoginError(null);
     try {
@@ -116,7 +117,7 @@ export const App: React.FC = () => {
   };
 
   // 使用員工編號/專屬帳號登入
-  const handleManualLoginSubmit = (e: React.FormEvent) => {
+  const handleManualLoginSubmit = (e: FormEvent) => {
     e.preventDefault();
     const cleanUid = loginUid.trim().toUpperCase();
     if (!cleanUid) return;
@@ -198,18 +199,14 @@ export const App: React.FC = () => {
     setActiveTab('detail');
   }, []);
 
-  // 驗證狀態初始化載入畫面
   if (authInitializing && !currentUser) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-        <div className="text-sm font-medium text-slate-500">
-          系統載入中...
-        </div>
+        <div className="text-sm font-medium text-slate-500">系統載入中...</div>
       </div>
     );
   }
 
-  // 尚未登入時顯示個人帳號登入畫面（確保不同登入者只會看到自己建立的工令）
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
@@ -228,7 +225,6 @@ export const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Google 帳號一鍵登入（串接原始 firebase.ts 的 auth 與 provider） */}
           <button
             type="button"
             onClick={handleGoogleLogin}
@@ -294,7 +290,7 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800">
-      {/* 頂部標題列（已移除右上角設定按鈕：人員分類、簽章、登出選單） */}
+      {/* 頂部標題列（無右上角設定齒輪按鈕） */}
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-xs border-b border-slate-200">
         <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -306,12 +302,13 @@ export const App: React.FC = () => {
                 工令管理系統
               </h1>
               <p className="text-[11px] text-slate-500">
-                {activeTab === 'list' ? '工令管理列表' : 'MO 工令明細與合約資料庫'}
+                {activeTab === 'list'
+                  ? '工令管理列表'
+                  : 'MO 工令明細與合約資料庫'}
               </p>
             </div>
           </div>
 
-          {/* 顯示目前登入者識別徽章（無右上角設定按鈕） */}
           <div className="inline-flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-full text-xs font-medium text-slate-700 border border-slate-200">
             <UserCheck className="w-3.5 h-3.5 text-blue-600" />
             <span>{currentUser.displayName}</span>
