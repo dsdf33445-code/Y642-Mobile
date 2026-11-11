@@ -1,10 +1,9 @@
 // src/components/MoDetailView.tsx
 // ============================================================================
 // 工令明細 (MO 明細) 視圖組件
-// 修復重點：
-// 1. 移除靜態 import * as XLSX from 'xlsx'，改用內建 CSV 解析 + 動態 ESM SheetJS 載入，
-//    無須修改 package.json 即可 100% 通過 TypeScript (tsc -b) 與 Vite / Vercel 建置！
-// 2. 全面使用 import type 符合 tsconfig.app.json 的 verbatimModuleSyntax 規範
+// 1. 修正 /products.csv 資料載入：支援 UTF-8 / Big5 自動解碼與智慧欄位推斷
+// 2. 加回「匯出 Excel」按鈕，可一鍵將目前工令的 MO 明細匯出為 Excel 報表
+// 3. 支援隨時切換其他合約（讀取不同 GitHub Excel / CSV 資料庫）並自動重算單價
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback, memo } from 'react';
@@ -21,6 +20,7 @@ import {
   CheckCircle2,
   FileSpreadsheet,
   Sparkles,
+  FileDown,
 } from 'lucide-react';
 import type {
   WorkOrder,
@@ -28,6 +28,10 @@ import type {
   ContractProductItem,
   MoLineItem,
 } from '../types';
+import {
+  fetchContractProducts,
+  exportWorkOrdersToExcel,
+} from '../constants';
 
 interface MoDetailViewProps {
   /** 目前檢視/編輯中的工令（若未選取則為 null） */
@@ -45,279 +49,9 @@ interface MoDetailViewProps {
 }
 
 /**
- * 動態載入之 SheetJS 最小型別介面（避免編譯期依賴 node_modules/xlsx）
- */
-interface SheetJsModule {
-  read: (
-    data: ArrayBuffer,
-    opts?: { type: string; codepage?: number }
-  ) => {
-    SheetNames: string[];
-    Sheets: Record<string, unknown>;
-  };
-  utils: {
-    sheet_to_json: <T>(
-      worksheet: unknown,
-      opts?: { defval?: string }
-    ) => T[];
-  };
-}
-
-/**
- * 模組層級記憶體快取：避免每次切換合約或切換分頁時重複向 GitHub 發送下載請求
+ * 模組層級記憶體快取：切換過一次的合約單價表會直接常駐於記憶體
  */
 const contractProductsCache = new Map<string, ContractProductItem[]>();
-
-/**
- * 智慧型 Excel / CSV 列資料解析器
- * 自動相容不同合約 Excel 或 products.csv 常見的中文/英文欄位標題名稱
- */
-const normalizeRowToProduct = (
-  row: Record<string, unknown>,
-  rowIndex: number,
-  sheetName: string
-): ContractProductItem | null => {
-  const cleanEntry: Record<string, string> = {};
-  Object.entries(row).forEach(([k, v]) => {
-    cleanEntry[k.trim().replace(/^\uFEFF/, '').toLowerCase()] = String(
-      v ?? ''
-    ).trim();
-  });
-
-  const findField = (candidates: string[]): string => {
-    for (const key of candidates) {
-      if (cleanEntry[key] !== undefined && cleanEntry[key] !== '') {
-        return cleanEntry[key];
-      }
-    }
-    for (const [k, val] of Object.entries(cleanEntry)) {
-      if (val !== '' && candidates.some((c) => k.includes(c))) {
-        return val;
-      }
-    }
-    return '';
-  };
-
-  const code =
-    findField([
-      'code',
-      'id',
-      'item',
-      'no',
-      '項次',
-      '料號',
-      '編號',
-      '代號',
-      '工項編號',
-    ]) || `${sheetName}-${rowIndex + 1}`;
-
-  const name = findField([
-    'name',
-    'title',
-    'description',
-    'product',
-    '名稱',
-    '品名',
-    '工項',
-    '工項名稱',
-    '項目',
-    '內容',
-  ]);
-
-  const spec = findField([
-    'spec',
-    'specification',
-    'model',
-    '規格',
-    '型號',
-    '說明',
-    '備註',
-  ]);
-
-  const unit = findField(['unit', 'uom', '單位', '計價單位']) || '式';
-
-  const rawPrice = findField([
-    'price',
-    'unitprice',
-    'unit_price',
-    'cost',
-    'amount',
-    '單價',
-    '合約單價',
-    '價格',
-    '金額',
-    '複價',
-  ]);
-
-  const parsedPrice = Number(rawPrice.replace(/[^0-9.-]+/g, ''));
-  const unitPrice =
-    Number.isFinite(parsedPrice) && parsedPrice >= 0 ? parsedPrice : 0;
-
-  if (!name && unitPrice === 0) {
-    return null;
-  }
-
-  return {
-    code,
-    name: name || `未命名工項 (${code})`,
-    spec,
-    unit,
-    unitPrice,
-    category: findField(['category', 'type', '分類', '類別']) || sheetName,
-  };
-};
-
-/**
- * 內建零依賴 RFC-4180 CSV 解析器（支援雙引號包覆與逗號分隔）
- */
-const parseCsvTextToItems = (
-  csvText: string,
-  sourceLabel = '預設單價表'
-): ContractProductItem[] => {
-  const rows: string[][] = [];
-  let currentRow: string[] = [];
-  let currentCell = '';
-  let inQuotes = false;
-
-  const cleanText = csvText.replace(/^\uFEFF/, '');
-
-  for (let i = 0; i < cleanText.length; i++) {
-    const ch = cleanText[i];
-    const nextCh = cleanText[i + 1];
-
-    if (inQuotes) {
-      if (ch === '"' && nextCh === '"') {
-        currentCell += '"';
-        i++;
-      } else if (ch === '"') {
-        inQuotes = false;
-      } else {
-        currentCell += ch;
-      }
-    } else {
-      if (ch === '"') {
-        inQuotes = true;
-      } else if (ch === ',') {
-        currentRow.push(currentCell.trim());
-        currentCell = '';
-      } else if (ch === '\r' && nextCh === '\n') {
-        currentRow.push(currentCell.trim());
-        rows.push(currentRow);
-        currentRow = [];
-        currentCell = '';
-        i++;
-      } else if (ch === '\n' || ch === '\r') {
-        currentRow.push(currentCell.trim());
-        rows.push(currentRow);
-        currentRow = [];
-        currentCell = '';
-      } else {
-        currentCell += ch;
-      }
-    }
-  }
-
-  if (currentCell.length > 0 || currentRow.length > 0) {
-    currentRow.push(currentCell.trim());
-    rows.push(currentRow);
-  }
-
-  const nonEmptyRows = rows.filter((r) => r.some((cell) => cell !== ''));
-  if (nonEmptyRows.length < 2) return [];
-
-  const headers = nonEmptyRows[0];
-  const result: ContractProductItem[] = [];
-
-  for (let rIdx = 1; rIdx < nonEmptyRows.length; rIdx++) {
-    const rowCells = nonEmptyRows[rIdx];
-    const rowObj: Record<string, unknown> = {};
-    headers.forEach((h, cIdx) => {
-      rowObj[h || `col_${cIdx}`] = rowCells[cIdx] ?? '';
-    });
-
-    const parsed = normalizeRowToProduct(rowObj, rIdx - 1, sourceLabel);
-    if (parsed) {
-      result.push(parsed);
-    }
-  }
-
-  return result;
-};
-
-/**
- * 從 GitHub Raw URL 或本地路徑下載並解析 Excel (.xlsx / .xls) 或 CSV (.csv)
- */
-const fetchAndParseContractData = async (
-  contract: ContractConfig
-): Promise<{ items: ContractProductItem[]; isFallback: boolean }> => {
-  const tryFetchResponse = async (url: string): Promise<Response> => {
-    const response = await fetch(url, { cache: 'no-cache' });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: 無法讀取 ${url}`);
-    }
-    return response;
-  };
-
-  let response: Response;
-  let activeUrl = contract.githubExcelUrl;
-  let isFallback = false;
-
-  try {
-    response = await tryFetchResponse(contract.githubExcelUrl);
-  } catch (err) {
-    console.warn(
-      `讀取合約 [${contract.name}] 的遠端網址失敗，自動切換至本地備援：`,
-      err
-    );
-    if (
-      contract.fallbackLocalUrl &&
-      contract.fallbackLocalUrl !== contract.githubExcelUrl
-    ) {
-      response = await tryFetchResponse(contract.fallbackLocalUrl);
-      activeUrl = contract.fallbackLocalUrl;
-      isFallback = true;
-    } else {
-      throw err;
-    }
-  }
-
-  const lowerUrl = activeUrl.split('?')[0].toLowerCase();
-
-  // 1. 若為 .csv 檔案，直接使用內建高速 CSV 解析器處理
-  if (lowerUrl.endsWith('.csv')) {
-    const text = await response.text();
-    const items = parseCsvTextToItems(text, contract.contractCode);
-    return { items, isFallback };
-  }
-
-  // 2. 若為 .xlsx / .xls 二進位 Excel 檔案，透過瀏覽器動態 ESM 載入 SheetJS 解析
-  const buffer = await response.arrayBuffer();
-  const sheetJsUrl = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs';
-  const XLSX = (await import(
-    /* @vite-ignore */ sheetJsUrl
-  )) as unknown as SheetJsModule;
-
-  const workbook = XLSX.read(buffer, { type: 'array', codepage: 65001 });
-  const parsedItems: ContractProductItem[] = [];
-
-  workbook.SheetNames.forEach((sheetName) => {
-    const worksheet = workbook.Sheets[sheetName];
-    if (!worksheet) return;
-
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
-      defval: '',
-    });
-
-    rows.forEach((row, idx) => {
-      const item = normalizeRowToProduct(row, idx, sheetName);
-      if (item) {
-        parsedItems.push(item);
-      }
-    });
-  });
-
-  return { items: parsedItems, isFallback };
-};
 
 export const MoDetailView: FC<MoDetailViewProps> = memo(
   ({
@@ -334,6 +68,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
     const [catalogError, setCatalogError] = useState<string | null>(null);
     const [usingFallbackNotice, setUsingFallbackNotice] =
       useState<boolean>(false);
+    const [resolvedSourceUrl, setResolvedSourceUrl] = useState<string>('');
 
     // 資料庫工項搜尋與分類過濾狀態
     const [catalogSearch, setCatalogSearch] = useState<string>('');
@@ -353,15 +88,19 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       return contracts.find((c) => c.id === targetId) || contracts[0];
     }, [workOrder?.contractId, contracts]);
 
-    // 載入指定合約的 GitHub Excel / CSV 資料庫
+    // 載入指定合約的 /products.csv 或 GitHub Excel 資料庫
     const loadContractDatabase = useCallback(
       async (contract: ContractConfig, forceRefresh = false) => {
         if (!contract) return;
 
         if (!forceRefresh && contractProductsCache.has(contract.id)) {
-          setCatalogItems(contractProductsCache.get(contract.id)!);
-          setCatalogError(null);
-          return;
+          const cached = contractProductsCache.get(contract.id)!;
+          if (cached.length > 0) {
+            setCatalogItems(cached);
+            setCatalogError(null);
+            setResolvedSourceUrl(contract.githubExcelUrl);
+            return;
+          }
         }
 
         setIsLoadingCatalog(true);
@@ -369,16 +108,18 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
         setUsingFallbackNotice(false);
 
         try {
-          const { items, isFallback } = await fetchAndParseContractData(
-            contract
-          );
+          const { items, isFallback, loadedUrl } =
+            await fetchContractProducts(contract);
           contractProductsCache.set(contract.id, items);
           setCatalogItems(items);
           setUsingFallbackNotice(isFallback);
+          setResolvedSourceUrl(loadedUrl);
         } catch (error) {
           console.error('載入合約資料庫失敗：', error);
           setCatalogError(
-            '無法讀取該合約的 GitHub Excel 資料庫，請確認網路連線或 GitHub Raw URL 設定。'
+            error instanceof Error
+              ? error.message
+              : '無法讀取 /products.csv 或 GitHub Excel 資料庫'
           );
           setCatalogItems([]);
         } finally {
@@ -405,7 +146,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       return ['ALL', ...Array.from(set)];
     }, [catalogItems]);
 
-    // 使用 useMemo 高速過濾合約資料庫中的工項（上限顯示前 80 筆提升行動裝置流暢度）
+    // 高速過濾合約資料庫中的工項（預設顯示前 100 筆，支援關鍵字即時檢索全部資料）
     const filteredCatalog = useMemo(() => {
       const kw = catalogSearch.trim().toLowerCase();
       return catalogItems
@@ -420,7 +161,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
             item.spec.toLowerCase().includes(kw)
           );
         })
-        .slice(0, 80);
+        .slice(0, 100);
     }, [catalogItems, catalogSearch, selectedCategory]);
 
     // 重新計算工令總金額並觸發更新
@@ -441,21 +182,22 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       [workOrder, onUpdateWorkOrder]
     );
 
-    // 處理切換合約下拉選單（自動比對新合約資料庫單價並更新小計）
+    // 切換合約下拉選單（自動比對新合約單價並重算小計）
     const handleContractChange = async (newContractId: string) => {
       if (!workOrder || newContractId === workOrder.contractId) return;
       const targetContract = contracts.find((c) => c.id === newContractId);
       if (!targetContract) return;
 
       let newCatalog = contractProductsCache.get(targetContract.id);
-      if (!newCatalog) {
+      if (!newCatalog || newCatalog.length === 0) {
         try {
           setIsLoadingCatalog(true);
-          const fetched = await fetchAndParseContractData(targetContract);
+          const fetched = await fetchContractProducts(targetContract);
           newCatalog = fetched.items;
           contractProductsCache.set(targetContract.id, newCatalog);
           setCatalogItems(newCatalog);
           setUsingFallbackNotice(fetched.isFallback);
+          setResolvedSourceUrl(fetched.loadedUrl);
         } catch {
           newCatalog = [];
         } finally {
@@ -482,7 +224,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       commitOrderItems(updatedItems, newContractId);
     };
 
-    // 從合約資料庫點擊「加入工令明細」
+    // 從合約資料庫點擊「+ 加入」帶入 MO 明細
     const handleAddFromCatalog = (product: ContractProductItem) => {
       if (!workOrder) return;
       const existingIndex = workOrder.items.findIndex(
@@ -493,7 +235,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       if (existingIndex >= 0) {
         nextItems = workOrder.items.map((item, idx) => {
           if (idx !== existingIndex) return item;
-          const nextQty = item.quantity + 1;
+          const nextQty = Number((item.quantity + 1).toFixed(2));
           return {
             ...item,
             quantity: nextQty,
@@ -576,7 +318,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
             尚未選擇要編輯的工令
           </h3>
           <p className="text-xs text-slate-500 max-w-sm mx-auto">
-            請先從「工令管理」點選一筆工令，或直接從下方下拉選單挑選屬於您的工令開始編輯 MO 明細。
+            請先從「工令管理」點擊「前往 MO」，或直接從下方下拉選單挑選屬於您的工令。
           </p>
           {allWorkOrders.length > 0 ? (
             <div className="max-w-xs mx-auto pt-2">
@@ -613,7 +355,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
 
     return (
       <div className="space-y-4 pb-24">
-        {/* 頂部工令資訊與「多合約資料庫 (GitHub Excel) 切換器」 */}
+        {/* 頂部工令資訊、匯出 Excel 按鈕與多合約資料庫切換器 */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3.5">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <button
@@ -625,17 +367,30 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
               返回工令列表
             </button>
 
-            <select
-              value={workOrder.id}
-              onChange={(e) => onSelectOrder(e.target.value)}
-              className="text-xs bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {allWorkOrders.map((wo) => (
-                <option key={wo.id} value={wo.id}>
-                  工令：{wo.woNumber} - {wo.title}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center gap-2">
+              {/* 快速切換其他工令 */}
+              <select
+                value={workOrder.id}
+                onChange={(e) => onSelectOrder(e.target.value)}
+                className="text-xs bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {allWorkOrders.map((wo) => (
+                  <option key={wo.id} value={wo.id}>
+                    工令：{wo.woNumber} - {wo.title}
+                  </option>
+                ))}
+              </select>
+
+              {/* 匯出 Excel 按鈕 */}
+              <button
+                type="button"
+                onClick={() => exportWorkOrdersToExcel([workOrder])}
+                className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+              >
+                <FileDown className="w-3.5 h-3.5" />
+                <span>匯出 Excel</span>
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-slate-100">
@@ -665,12 +420,12 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
             </div>
           </div>
 
-          {/* 選擇其他合約（對應不同資料庫，讀取 GitHub 裡的 Excel / CSV） */}
+          {/* 選擇其他合約（對應不同資料庫，讀取 /products.csv 或 GitHub Excel） */}
           <div className="bg-blue-50/60 border border-blue-200/80 rounded-xl p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">
               <label className="flex items-center gap-1.5 text-xs font-bold text-blue-900">
                 <Database className="w-4 h-4 text-blue-600" />
-                <span>選擇合約資料庫（讀取 GitHub Excel / CSV 單價表）</span>
+                <span>選擇合約資料庫（讀取 GitHub Excel / products.csv）</span>
               </label>
 
               <button
@@ -684,7 +439,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                     isLoadingCatalog ? 'animate-spin' : ''
                   }`}
                 />
-                <span>重新同步 Excel</span>
+                <span>重新載入資料</span>
               </button>
             </div>
 
@@ -702,7 +457,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
 
             <div className="flex items-center justify-between text-[11px] text-slate-600 flex-wrap gap-1">
               <span className="truncate max-w-full font-mono text-[10px] text-slate-500">
-                資料來源：{activeContract?.githubExcelUrl}
+                資料來源：{resolvedSourceUrl || activeContract?.githubExcelUrl}
               </span>
               <span className="font-semibold text-blue-700">
                 已載入 {catalogItems.length} 筆合約工項
@@ -713,7 +468,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
               <div className="flex items-center gap-1.5 text-[11px] text-amber-700 bg-amber-50/90 px-2.5 py-1.5 rounded-lg border border-amber-200">
                 <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                 <span>
-                  遠端 GitHub Excel 無法連線，已自動載入本地備援單價表（/products.csv）。
+                  遠端 GitHub Excel 無法連線，已自動載入本地單價表（/products.csv）。
                 </span>
               </div>
             )}
@@ -762,7 +517,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                 placeholder="工項名稱 *"
                 value={customName}
                 onChange={(e) => setCustomName(e.target.value)}
-                className=" px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg"
+                className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg"
               />
               <input
                 type="text"
@@ -888,12 +643,14 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
           )}
         </div>
 
-        {/* 下方：合約 Excel 資料庫搜尋與快速選取區 */}
+        {/* 下方：合約 Excel / products.csv 資料庫搜尋與快速選取區 */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
               <Sparkles className="w-4 h-4 text-blue-600" />
-              <span>合約工項資料庫搜尋（點擊「+ 加入」即可帶入明細）</span>
+              <span>
+                合約工項資料庫搜尋（共 {catalogItems.length} 筆，點擊「+ 加入」帶入明細）
+              </span>
             </h3>
           </div>
 
@@ -904,7 +661,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                 type="text"
                 value={catalogSearch}
                 onChange={(e) => setCatalogSearch(e.target.value)}
-                placeholder="輸入料號、工項名稱或規格快速檢索 Excel 內容..."
+                placeholder="輸入料號、工項名稱或規格快速檢索..."
                 className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -926,11 +683,13 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
 
           {isLoadingCatalog ? (
             <div className="py-10 text-center text-xs text-slate-500">
-              正在從 GitHub 讀取並解析合約資料庫...
+              正在讀取並解析合約單價資料庫...
             </div>
           ) : filteredCatalog.length === 0 ? (
             <div className="py-8 text-center text-xs text-slate-400">
-              找不到符合「{catalogSearch}」的合約工項
+              {catalogItems.length === 0
+                ? '目前資料庫尚無工項，請點擊上方「重新載入資料」按鈕。'
+                : `找不到符合「${catalogSearch}」的合約工項`}
             </div>
           ) : (
             <div className="max-h-96 overflow-y-auto divide-y divide-slate-100 pr-1">

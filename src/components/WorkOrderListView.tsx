@@ -1,7 +1,10 @@
 // src/components/WorkOrderListView.tsx
 // ============================================================================
 // 工令管理列表視圖組件
-// 功能：顯示登入者個人的工令清單、快速搜尋、建立新工令、切換狀態、進入工令明細
+// 完整包含：
+// 1. 「前往 MO」按鈕：一鍵進入該工令的 MO 明細編輯器
+// 2. 「匯出 Excel」按鈕：支援單筆工令匯出，以及勾選多筆工令「合併匯出 Excel」
+// 3. 「合併工令」功能：勾選多筆工令後，自動累加相同工項數量並合併為單一工令
 // ============================================================================
 
 import { useState, useMemo, memo } from 'react';
@@ -10,14 +13,19 @@ import {
   Plus,
   Search,
   Trash2,
-  ChevronRight,
   FolderOpen,
   CheckCircle2,
   Clock,
   Database,
   MapPin,
+  FileDown,
+  GitMerge,
+  ArrowRightCircle,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 import type { WorkOrder, ContractConfig } from '../types';
+import { exportWorkOrdersToExcel } from '../constants';
 
 interface WorkOrderListViewProps {
   /** 目前登入者專屬的工令清單 */
@@ -26,7 +34,7 @@ interface WorkOrderListViewProps {
   selectedOrderId: string | null;
   /** 可選用的合約清單 */
   contracts: ContractConfig[];
-  /** 點擊工令進入「工令明細」的回呼 */
+  /** 點擊「前往 MO」進入工令明細的回呼 */
   onSelectOrder: (orderId: string) => void;
   /** 新增工令的回呼 */
   onCreateOrder: (newOrderData: {
@@ -34,6 +42,13 @@ interface WorkOrderListViewProps {
     title: string;
     location: string;
     contractId: string;
+  }) => void;
+  /** 合併多筆工令的回呼 */
+  onMergeOrders: (params: {
+    sourceOrderIds: string[];
+    mergedWoNumber: string;
+    mergedTitle: string;
+    deleteSources: boolean;
   }) => void;
   /** 刪除工令的回呼 */
   onDeleteOrder: (orderId: string) => void;
@@ -48,6 +63,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
     contracts,
     onSelectOrder,
     onCreateOrder,
+    onMergeOrders,
     onDeleteOrder,
     onToggleStatus,
   }) => {
@@ -55,7 +71,10 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState<'ALL' | '進行中' | '已完成'>('ALL');
 
-    // 新增工令表單開關與欄位狀態
+    // 多選勾選狀態（用於「合併工令」與「批次匯出 Excel」）
+    const [checkedIds, setCheckedIds] = useState<string[]>([]);
+
+    // 新增工令彈出視窗狀態
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [woNumber, setWoNumber] = useState('');
     const [title, setTitle] = useState('');
@@ -64,14 +83,20 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
       contracts[0]?.id || 'contract-default'
     );
 
-    // 建立合約 ID 對照表，加速列表渲染時的名稱查詢
+    // 合併工令彈出視窗狀態
+    const [isMergeModalOpen, setIsMergeModalOpen] = useState(false);
+    const [mergedWoNumber, setMergedWoNumber] = useState('');
+    const [mergedTitle, setMergedTitle] = useState('');
+    const [deleteSourceAfterMerge, setDeleteSourceAfterMerge] = useState(false);
+
+    // 合約 ID 對照表
     const contractMap = useMemo(() => {
       const map = new Map<string, ContractConfig>();
       contracts.forEach((c) => map.set(c.id, c));
       return map;
     }, [contracts]);
 
-    // 使用 useMemo 快取篩選後的工令列表
+    // 篩選後的工令列表
     const filteredOrders = useMemo(() => {
       const kw = searchTerm.trim().toLowerCase();
       return workOrders.filter((order) => {
@@ -87,7 +112,13 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
       });
     }, [workOrders, searchTerm, statusFilter]);
 
-    // 計算統計摘要數據
+    // 已勾選的工令物件陣列
+    const checkedWorkOrders = useMemo(
+      () => workOrders.filter((o) => checkedIds.includes(o.id)),
+      [workOrders, checkedIds]
+    );
+
+    // 統計摘要數據
     const stats = useMemo(() => {
       let activeCount = 0;
       let totalAmountSum = 0;
@@ -101,6 +132,53 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
         totalAmountSum,
       };
     }, [workOrders]);
+
+    // 切換單筆工令勾選狀態
+    const toggleCheckOrder = (id: string) => {
+      setCheckedIds((prev) =>
+        prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+      );
+    };
+
+    // 全選 / 取消全選目前篩選列表
+    const toggleSelectAll = () => {
+      if (checkedIds.length === filteredOrders.length && filteredOrders.length > 0) {
+        setCheckedIds([]);
+      } else {
+        setCheckedIds(filteredOrders.map((o) => o.id));
+      }
+    };
+
+    // 開啟合併工令確認視窗
+    const handleOpenMergeModal = () => {
+      if (checkedWorkOrders.length < 2) {
+        window.alert('請先勾選至少 2 筆要合併的工令！');
+        return;
+      }
+      const first = checkedWorkOrders[0];
+      setMergedWoNumber(`${first.woNumber}-M`);
+      setMergedTitle(
+        `${first.title} (合併 ${checkedWorkOrders.map((o) => o.woNumber).join('+')})`
+      );
+      setDeleteSourceAfterMerge(false);
+      setIsMergeModalOpen(true);
+    };
+
+    // 確認執行合併工令
+    const handleConfirmMerge = (e: FormEvent) => {
+      e.preventDefault();
+      if (!mergedWoNumber.trim() || !mergedTitle.trim()) return;
+
+      onMergeOrders({
+        sourceOrderIds: checkedIds,
+        mergedWoNumber: mergedWoNumber.trim().toUpperCase(),
+        mergedTitle: mergedTitle.trim(),
+        deleteSources: deleteSourceAfterMerge,
+      });
+
+      setCheckedIds([]);
+      setIsMergeModalOpen(false);
+    };
 
     // 處理建立新工令表單送出
     const handleCreateSubmit = (e: FormEvent) => {
@@ -121,7 +199,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
     };
 
     return (
-      <div className="space-y-4 pb-20">
+      <div className="space-y-4 pb-24">
         {/* 頂部個人工令統計卡片 */}
         <div className="grid grid-cols-3 gap-2.5 bg-white p-3.5 rounded-xl shadow-xs border border-slate-200">
           <div className="bg-slate-50 p-2.5 rounded-lg text-center">
@@ -140,22 +218,22 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
           </div>
         </div>
 
-        {/* 搜尋列與新增工令按鈕 */}
-        <div className="flex flex-col sm:flex-row gap-2.5">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="搜尋工令編號、案名或施工區域..."
-              className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+        {/* 搜尋列與主要操作按鈕群（新增工令、合併工令、匯出 Excel） */}
+        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs space-y-3">
+          <div className="flex flex-col sm:flex-row gap-2.5">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="搜尋工令編號、案名或施工區域..."
+                className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
 
-          <div className="flex gap-2">
             {/* 狀態篩選按鈕群 */}
-            <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
+            <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs self-start">
               {(['ALL', '進行中', '已完成'] as const).map((st) => (
                 <button
                   key={st}
@@ -171,12 +249,73 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* 功能按鈕列：全選、合併工令、匯出 Excel、新增工令 */}
+          <div className="flex items-center justify-between gap-2 flex-wrap pt-1 border-t border-slate-100">
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={toggleSelectAll}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+              >
+                {checkedIds.length > 0 &&
+                checkedIds.length === filteredOrders.length ? (
+                  <CheckSquare className="w-3.5 h-3.5 text-blue-600" />
+                ) : (
+                  <Square className="w-3.5 h-3.5 text-slate-400" />
+                )}
+                <span>
+                  {checkedIds.length > 0
+                    ? `已選 ${checkedIds.length} 筆`
+                    : '勾選工令'}
+                </span>
+              </button>
+
+              {/* 合併工令按鈕 */}
+              <button
+                type="button"
+                onClick={handleOpenMergeModal}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  checkedIds.length >= 2
+                    ? 'bg-purple-600 hover:bg-purple-700 text-white shadow-2xs'
+                    : 'bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200'
+                }`}
+              >
+                <GitMerge className="w-3.5 h-3.5" />
+                <span>合併工令{checkedIds.length >= 2 ? ` (${checkedIds.length})` : ''}</span>
+              </button>
+
+              {/* 匯出 Excel 按鈕（若有勾選則匯出勾選工令，未勾選則匯出全部篩選工令） */}
+              <button
+                type="button"
+                onClick={() => {
+                  const targetOrders =
+                    checkedWorkOrders.length > 0
+                      ? checkedWorkOrders
+                      : filteredOrders;
+                  if (targetOrders.length === 0) {
+                    window.alert('目前沒有可匯出的工令資料！');
+                    return;
+                  }
+                  exportWorkOrdersToExcel(targetOrders);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white border border-emerald-200 transition-colors cursor-pointer"
+              >
+                <FileDown className="w-3.5 h-3.5" />
+                <span>
+                  {checkedIds.length > 0
+                    ? `匯出已選 Excel (${checkedIds.length})`
+                    : '匯出 Excel'}
+                </span>
+              </button>
+            </div>
 
             {/* 新增工令按鈕 */}
             <button
               type="button"
               onClick={() => setIsCreateModalOpen(true)}
-              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-xs transition-colors cursor-pointer shrink-0"
+              className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-xs transition-colors cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>新增工令</span>
@@ -200,19 +339,39 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
             {filteredOrders.map((order) => {
               const contractInfo = contractMap.get(order.contractId);
               const isSelected = order.id === selectedOrderId;
+              const isChecked = checkedIds.includes(order.id);
 
               return (
                 <div
                   key={order.id}
-                  onClick={() => onSelectOrder(order.id)}
-                  className={`group bg-white rounded-xl p-4 border transition-all cursor-pointer ${
-                    isSelected
+                  className={`bg-white rounded-xl p-4 border transition-all ${
+                    isChecked
+                      ? 'border-purple-400 ring-2 ring-purple-500/15 bg-purple-50/10'
+                      : isSelected
                       ? 'border-blue-500 ring-2 ring-blue-500/15 shadow-xs'
                       : 'border-slate-200 hover:border-blue-300 shadow-2xs'
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-1 flex-1 min-w-0">
+                  <div className="flex items-start gap-3">
+                    {/* 左側：合併/批次操作勾選框 */}
+                    <button
+                      type="button"
+                      onClick={() => toggleCheckOrder(order.id)}
+                      title="勾選以合併工令或批次匯出 Excel"
+                      className="mt-1 text-slate-400 hover:text-purple-600 cursor-pointer shrink-0"
+                    >
+                      {isChecked ? (
+                        <CheckSquare className="w-5 h-5 text-purple-600" />
+                      ) : (
+                        <Square className="w-5 h-5" />
+                      )}
+                    </button>
+
+                    {/* 中間：工令主要資訊 */}
+                    <div
+                      onClick={() => onSelectOrder(order.id)}
+                      className="space-y-1.5 flex-1 min-w-0 cursor-pointer"
+                    >
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono text-xs font-bold px-2 py-0.5 bg-slate-100 text-slate-800 rounded-md border border-slate-200">
                           {order.woNumber}
@@ -244,7 +403,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                         </span>
                       </div>
 
-                      <h3 className="font-bold text-slate-800 text-base truncate pt-0.5">
+                      <h3 className="font-bold text-slate-800 text-base truncate">
                         {order.title}
                       </h3>
 
@@ -262,7 +421,8 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                       </div>
                     </div>
 
-                    <div className="flex flex-col items-end justify-between self-stretch shrink-0">
+                    {/* 右側：金額、單筆匯出 Excel、前往 MO、刪除 */}
+                    <div className="flex flex-col items-end justify-between self-stretch shrink-0 gap-2">
                       <div className="text-right">
                         <div className="text-[11px] text-slate-400">工令總額</div>
                         <div className="text-base font-bold text-blue-600 font-mono">
@@ -270,7 +430,35 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1 mt-2">
+                      <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                        {/* 單筆匯出 Excel 按鈕 */}
+                        <button
+                          type="button"
+                          title="匯出此工令 Excel"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            exportWorkOrdersToExcel([order]);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-600 hover:text-white rounded-lg border border-emerald-200 transition-colors cursor-pointer"
+                        >
+                          <FileDown className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">匯出</span>
+                        </button>
+
+                        {/* 前往 MO 按鈕 */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectOrder(order.id);
+                          }}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-2xs transition-colors cursor-pointer"
+                        >
+                          <span>前往 MO</span>
+                          <ArrowRightCircle className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* 刪除按鈕 */}
                         <button
                           type="button"
                           title="刪除此工令"
@@ -288,9 +476,6 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
-                        <span className="p-1 text-slate-400 group-hover:text-blue-600 group-hover:translate-x-0.5 transition-all">
-                          <ChevronRight className="w-5 h-5" />
-                        </span>
                       </div>
                     </div>
                   </div>
@@ -300,7 +485,95 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
           </div>
         )}
 
-        {/* 新增工令彈出視窗 (Modal) */}
+        {/* 合併工令彈出視窗 (Merge Modal) */}
+        {isMergeModalOpen && (
+          <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-xl border border-slate-200 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h2 className="text-base font-bold text-slate-800 flex items-center gap-1.5">
+                  <GitMerge className="w-5 h-5 text-purple-600" />
+                  <span>合併工令（共選取 {checkedWorkOrders.length} 筆）</span>
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setIsMergeModalOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 text-sm cursor-pointer"
+                >
+                  關閉
+                </button>
+              </div>
+
+              <div className="bg-purple-50/70 border border-purple-200 rounded-xl p-3 text-xs text-purple-900 space-y-1">
+                <div className="font-semibold">即將合併以下工令之 MO 明細：</div>
+                <ul className="list-disc list-inside text-purple-800 space-y-0.5">
+                  {checkedWorkOrders.map((o) => (
+                    <li key={o.id}>
+                      <span className="font-mono font-bold">{o.woNumber}</span> -{' '}
+                      {o.title}（{o.items.length} 項 / $
+                      {o.totalAmount.toLocaleString()}）
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <form onSubmit={handleConfirmMerge} className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    合併後工令編號 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={mergedWoNumber}
+                    onChange={(e) => setMergedWoNumber(e.target.value)}
+                    className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    合併後工令案名 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={mergedTitle}
+                    onChange={(e) => setMergedTitle(e.target.value)}
+                    className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+
+                <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer pt-1">
+                  <input
+                    type="checkbox"
+                    checked={deleteSourceAfterMerge}
+                    onChange={(e) => setDeleteSourceAfterMerge(e.target.checked)}
+                    className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                  />
+                  <span>合併完成後，自動刪除原有的 {checkedWorkOrders.length} 筆來源工令</span>
+                </label>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsMergeModalOpen(false)}
+                    className="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 cursor-pointer"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 rounded-xl text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white shadow-xs cursor-pointer"
+                  >
+                    確認合併並前往 MO
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* 新增工令彈出視窗 (Create Modal) */}
         {isCreateModalOpen && (
           <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-xl border border-slate-200 space-y-4">
@@ -386,7 +659,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                     type="submit"
                     className="px-5 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-xs cursor-pointer"
                   >
-                    建立並進入明細
+                    建立並前往 MO
                   </button>
                 </div>
               </form>

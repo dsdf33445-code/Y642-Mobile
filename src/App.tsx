@@ -1,10 +1,10 @@
 // src/App.tsx
 // ============================================================================
 // Mobile-MO 行動工令管理系統主程式
-// 修復重點：
-// 1. 移除未在執行期呼叫的預設 import React，改用 import type { FC, FormEvent }，
-//    解決 tsconfig.app.json 的 TS6133 / TS1484 編譯錯誤
-// 2. 保留工令管理、工令明細與個人帳號資料隔離；移除協議書分頁與右上角設定按鈕
+// 完整支援：
+// 1. 工令管理、工令明細、個人帳號資料隔離
+// 2. 前往 MO、合併工令 (handleMergeOrders)、匯出 Excel
+// 3. 多合約資料庫切換（支援 /products.csv 雙編碼解析與 GitHub Excel）
 // ============================================================================
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -12,7 +12,7 @@ import type { FC, FormEvent } from 'react';
 import { onAuthStateChanged, signInWithPopup } from 'firebase/auth';
 import { Wrench, UserCheck, LogIn } from 'lucide-react';
 import type { ActiveTab, UserProfile, WorkOrder } from './types';
-import { CONTRACT_DATABASES, STORAGE_KEYS } from './constants';
+import { CONTRACT_DATABASES, STORAGE_KEYS, mergeMoLineItems } from './constants';
 import {
   auth,
   provider,
@@ -25,7 +25,7 @@ import { MoDetailView } from './components/MoDetailView';
 import { BottomNavigation } from './components/BottomNavigation';
 
 export const App: FC = () => {
-  // 1. 登入者狀態：優先讀取本地儲存或由 Firebase Auth onAuthStateChanged 自動帶入
+  // 1. 登入者狀態
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
@@ -41,7 +41,7 @@ export const App: FC = () => {
   const [loginUid, setLoginUid] = useState('');
   const [loginName, setLoginName] = useState('');
 
-  // 2. 導覽分頁狀態（僅保留 'list' 工令管理 與 'detail' 工令明細）
+  // 2. 導覽分頁狀態（'list' 工令管理 與 'detail' 工令明細）
   const [activeTab, setActiveTab] = useState<ActiveTab>('list');
 
   // 3. 目前登入者專屬的工令清單與選取中的工令 ID
@@ -68,7 +68,7 @@ export const App: FC = () => {
     return () => unsubscribeAuth();
   }, []);
 
-  // 當 currentUser 確定後，訂閱該登入者專屬的工令清單（依 ownerId 隔離資料）
+  // 訂閱該登入者專屬的工令清單（依 ownerId 隔離資料）
   useEffect(() => {
     if (!currentUser) {
       setWorkOrders([]);
@@ -130,7 +130,7 @@ export const App: FC = () => {
     setCurrentUser(profile);
   };
 
-  // 建立新工令（自動綁定目前登入者的 ownerId）
+  // 建立新工令（自動綁定目前登入者的 ownerId 並前往 MO 明細）
   const handleCreateOrder = useCallback(
     async (data: {
       woNumber: string;
@@ -160,6 +160,56 @@ export const App: FC = () => {
       setActiveTab('detail');
     },
     [currentUser]
+  );
+
+  // 合併多筆工令並自動前往合併後的 MO 明細
+  const handleMergeOrders = useCallback(
+    async (params: {
+      sourceOrderIds: string[];
+      mergedWoNumber: string;
+      mergedTitle: string;
+      deleteSources: boolean;
+    }) => {
+      if (!currentUser) return;
+      const sourceOrders = workOrders.filter((o) =>
+        params.sourceOrderIds.includes(o.id)
+      );
+      if (sourceOrders.length < 2) return;
+
+      const mergedItems = mergeMoLineItems(sourceOrders);
+      const totalAmount = mergedItems.reduce((sum, i) => sum + i.subtotal, 0);
+      const mergedLocations = Array.from(
+        new Set(sourceOrders.map((o) => o.location).filter(Boolean))
+      ).join(' / ');
+
+      const now = new Date().toISOString();
+      const mergedOrder: WorkOrder = {
+        id: `wo-merged-${Date.now()}`,
+        woNumber: params.mergedWoNumber,
+        title: params.mergedTitle,
+        location: mergedLocations,
+        ownerId: currentUser.uid,
+        ownerName: currentUser.displayName,
+        contractId: sourceOrders[0].contractId || CONTRACT_DATABASES[0].id,
+        status: '進行中',
+        items: mergedItems,
+        totalAmount,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await saveUserWorkOrder(currentUser.uid, mergedOrder);
+
+      if (params.deleteSources) {
+        for (const src of sourceOrders) {
+          await deleteUserWorkOrder(currentUser.uid, src.id);
+        }
+      }
+
+      setSelectedOrderId(mergedOrder.id);
+      setActiveTab('detail');
+    },
+    [currentUser, workOrders]
   );
 
   // 更新工令（含 MO 明細變動或切換合約資料庫）
@@ -193,7 +243,7 @@ export const App: FC = () => {
     [currentUser]
   );
 
-  // 點選工令並切換至「工令明細」分頁
+  // 點擊「前往 MO」切換至工令明細分頁
   const handleSelectOrderAndGoDetail = useCallback((orderId: string) => {
     setSelectedOrderId(orderId);
     setActiveTab('detail');
@@ -290,7 +340,7 @@ export const App: FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800">
-      {/* 頂部標題列（無右上角設定齒輪按鈕） */}
+      {/* 頂部標題列 */}
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-xs border-b border-slate-200">
         <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -303,7 +353,7 @@ export const App: FC = () => {
               </h1>
               <p className="text-[11px] text-slate-500">
                 {activeTab === 'list'
-                  ? '工令管理列表'
+                  ? '工令管理列表（支援合併工令與匯出 Excel）'
                   : 'MO 工令明細與合約資料庫'}
               </p>
             </div>
@@ -325,6 +375,7 @@ export const App: FC = () => {
             contracts={CONTRACT_DATABASES}
             onSelectOrder={handleSelectOrderAndGoDetail}
             onCreateOrder={handleCreateOrder}
+            onMergeOrders={handleMergeOrders}
             onDeleteOrder={handleDeleteOrder}
             onToggleStatus={handleToggleStatus}
           />
@@ -340,7 +391,7 @@ export const App: FC = () => {
         )}
       </main>
 
-      {/* 底部導覽列（僅保留「工令管理」與「工令明細」） */}
+      {/* 底部導覽列 */}
       <BottomNavigation
         activeTab={activeTab}
         onTabChange={setActiveTab}
