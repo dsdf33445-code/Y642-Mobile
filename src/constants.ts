@@ -15,7 +15,7 @@ import type {
  * 可在 .env 設定 VITE_MO_SYSTEM_URL，或直接修改下方預設網址字串
  */
 export const MO_SYSTEM_URL: string =
-  import.meta.env.VITE_MO_SYSTEM_URL || 'https://erp.csc.com.tw/';
+  import.meta.env.VITE_MO_SYSTEM_URL || 'https://mwweb.csc.com.tw/MIS/MO/MO_W6X_WebSite/MOXD/MOAUXD.aspx';
 
 /**
  * 動態解析靜態資源路徑（相容根目錄 / 與子路徑部署）
