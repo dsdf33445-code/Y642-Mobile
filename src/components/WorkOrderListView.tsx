@@ -1,10 +1,10 @@
 // src/components/WorkOrderListView.tsx
 // ============================================================================
 // 工令管理列表視圖組件
-// 完整包含：
-// 1. 「前往 MO」按鈕：一鍵進入該工令的 MO 明細編輯器
-// 2. 「匯出 Excel」按鈕：支援單筆工令匯出，以及勾選多筆工令「合併匯出 Excel」
-// 3. 「合併工令」功能：勾選多筆工令後，自動累加相同工項數量並合併為單一工令
+// 修改重點：
+// 1. 加回「編輯」工令按鈕與編輯彈出視窗
+// 2. 刪除此分頁的「匯出 Excel」與「前往 MO」按鈕
+// 3. 建立/編輯工令表單刪除「施工區域 / 設備位置」欄位，並將案名欄位改為「工令名稱」
 // ============================================================================
 
 import { useState, useMemo, memo } from 'react';
@@ -13,19 +13,16 @@ import {
   Plus,
   Search,
   Trash2,
+  Pencil,
   FolderOpen,
   CheckCircle2,
   Clock,
   Database,
-  MapPin,
-  FileDown,
   GitMerge,
-  ArrowRightCircle,
   CheckSquare,
   Square,
 } from 'lucide-react';
 import type { WorkOrder, ContractConfig } from '../types';
-import { exportWorkOrdersToExcel } from '../constants';
 
 interface WorkOrderListViewProps {
   /** 目前登入者專屬的工令清單 */
@@ -34,13 +31,19 @@ interface WorkOrderListViewProps {
   selectedOrderId: string | null;
   /** 可選用的合約清單 */
   contracts: ContractConfig[];
-  /** 點擊「前往 MO」進入工令明細的回呼 */
+  /** 點擊工令卡片進入工令明細的回呼 */
   onSelectOrder: (orderId: string) => void;
-  /** 新增工令的回呼 */
+  /** 新增工令的回呼（已移除施工區域欄位） */
   onCreateOrder: (newOrderData: {
     woNumber: string;
     title: string;
-    location: string;
+    contractId: string;
+  }) => void;
+  /** 編輯既有工令的回呼 */
+  onEditOrder: (updatedOrderData: {
+    id: string;
+    woNumber: string;
+    title: string;
     contractId: string;
   }) => void;
   /** 合併多筆工令的回呼 */
@@ -63,6 +66,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
     contracts,
     onSelectOrder,
     onCreateOrder,
+    onEditOrder,
     onMergeOrders,
     onDeleteOrder,
     onToggleStatus,
@@ -71,17 +75,22 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState<'ALL' | '進行中' | '已完成'>('ALL');
 
-    // 多選勾選狀態（用於「合併工令」與「批次匯出 Excel」）
+    // 多選勾選狀態（用於「合併工令」）
     const [checkedIds, setCheckedIds] = useState<string[]>([]);
 
     // 新增工令彈出視窗狀態
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [woNumber, setWoNumber] = useState('');
     const [title, setTitle] = useState('');
-    const [location, setLocation] = useState('');
     const [contractId, setContractId] = useState(
       contracts[0]?.id || 'contract-default'
     );
+
+    // 編輯工令彈出視窗狀態
+    const [editingOrder, setEditingOrder] = useState<WorkOrder | null>(null);
+    const [editWoNumber, setEditWoNumber] = useState('');
+    const [editTitle, setEditTitle] = useState('');
+    const [editContractId, setEditContractId] = useState('');
 
     // 合併工令彈出視窗狀態
     const [isMergeModalOpen, setIsMergeModalOpen] = useState(false);
@@ -106,8 +115,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
         if (!kw) return true;
         return (
           order.woNumber.toLowerCase().includes(kw) ||
-          order.title.toLowerCase().includes(kw) ||
-          (order.location && order.location.toLowerCase().includes(kw))
+          order.title.toLowerCase().includes(kw)
         );
       });
     }, [workOrders, searchTerm, statusFilter]);
@@ -142,11 +150,37 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
 
     // 全選 / 取消全選目前篩選列表
     const toggleSelectAll = () => {
-      if (checkedIds.length === filteredOrders.length && filteredOrders.length > 0) {
+      if (
+        checkedIds.length === filteredOrders.length &&
+        filteredOrders.length > 0
+      ) {
         setCheckedIds([]);
       } else {
         setCheckedIds(filteredOrders.map((o) => o.id));
       }
+    };
+
+    // 開啟編輯工令視窗
+    const handleOpenEditModal = (order: WorkOrder) => {
+      setEditingOrder(order);
+      setEditWoNumber(order.woNumber);
+      setEditTitle(order.title);
+      setEditContractId(order.contractId || contracts[0]?.id || 'contract-default');
+    };
+
+    // 儲存編輯後的工令
+    const handleEditSubmit = (e: FormEvent) => {
+      e.preventDefault();
+      if (!editingOrder || !editWoNumber.trim() || !editTitle.trim()) return;
+
+      onEditOrder({
+        id: editingOrder.id,
+        woNumber: editWoNumber.trim().toUpperCase(),
+        title: editTitle.trim(),
+        contractId: editContractId,
+      });
+
+      setEditingOrder(null);
     };
 
     // 開啟合併工令確認視窗
@@ -188,13 +222,11 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
       onCreateOrder({
         woNumber: woNumber.trim().toUpperCase(),
         title: title.trim(),
-        location: location.trim(),
         contractId,
       });
 
       setWoNumber('');
       setTitle('');
-      setLocation('');
       setIsCreateModalOpen(false);
     };
 
@@ -204,11 +236,15 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
         <div className="grid grid-cols-3 gap-2.5 bg-white p-3.5 rounded-xl shadow-xs border border-slate-200">
           <div className="bg-slate-50 p-2.5 rounded-lg text-center">
             <div className="text-[11px] text-slate-500">個人工令總數</div>
-            <div className="text-lg font-bold text-slate-800">{stats.totalCount}</div>
+            <div className="text-lg font-bold text-slate-800">
+              {stats.totalCount}
+            </div>
           </div>
           <div className="bg-blue-50/70 p-2.5 rounded-lg text-center">
             <div className="text-[11px] text-blue-600">進行中工令</div>
-            <div className="text-lg font-bold text-blue-700">{stats.activeCount}</div>
+            <div className="text-lg font-bold text-blue-700">
+              {stats.activeCount}
+            </div>
           </div>
           <div className="bg-emerald-50/70 p-2.5 rounded-lg text-center">
             <div className="text-[11px] text-emerald-600">累計總金額</div>
@@ -218,7 +254,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
           </div>
         </div>
 
-        {/* 搜尋列與主要操作按鈕群（新增工令、合併工令、匯出 Excel） */}
+        {/* 搜尋列與主要操作按鈕群（已移除匯出 Excel 按鈕） */}
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs space-y-3">
           <div className="flex flex-col sm:flex-row gap-2.5">
             <div className="relative flex-1">
@@ -227,7 +263,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="搜尋工令編號、案名或施工區域..."
+                placeholder="搜尋工令編號或工令名稱..."
                 className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -251,7 +287,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
             </div>
           </div>
 
-          {/* 功能按鈕列：全選、合併工令、匯出 Excel、新增工令 */}
+          {/* 功能按鈕列：全選、合併工令、新增工令 */}
           <div className="flex items-center justify-between gap-2 flex-wrap pt-1 border-t border-slate-100">
             <div className="flex items-center gap-2 flex-wrap">
               <button
@@ -283,30 +319,8 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                 }`}
               >
                 <GitMerge className="w-3.5 h-3.5" />
-                <span>合併工令{checkedIds.length >= 2 ? ` (${checkedIds.length})` : ''}</span>
-              </button>
-
-              {/* 匯出 Excel 按鈕（若有勾選則匯出勾選工令，未勾選則匯出全部篩選工令） */}
-              <button
-                type="button"
-                onClick={() => {
-                  const targetOrders =
-                    checkedWorkOrders.length > 0
-                      ? checkedWorkOrders
-                      : filteredOrders;
-                  if (targetOrders.length === 0) {
-                    window.alert('目前沒有可匯出的工令資料！');
-                    return;
-                  }
-                  exportWorkOrdersToExcel(targetOrders);
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white border border-emerald-200 transition-colors cursor-pointer"
-              >
-                <FileDown className="w-3.5 h-3.5" />
                 <span>
-                  {checkedIds.length > 0
-                    ? `匯出已選 Excel (${checkedIds.length})`
-                    : '匯出 Excel'}
+                  合併工令{checkedIds.length >= 2 ? ` (${checkedIds.length})` : ''}
                 </span>
               </button>
             </div>
@@ -353,11 +367,11 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                   }`}
                 >
                   <div className="flex items-start gap-3">
-                    {/* 左側：合併/批次操作勾選框 */}
+                    {/* 左側：合併勾選框 */}
                     <button
                       type="button"
                       onClick={() => toggleCheckOrder(order.id)}
-                      title="勾選以合併工令或批次匯出 Excel"
+                      title="勾選以合併工令"
                       className="mt-1 text-slate-400 hover:text-purple-600 cursor-pointer shrink-0"
                     >
                       {isChecked ? (
@@ -367,7 +381,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                       )}
                     </button>
 
-                    {/* 中間：工令主要資訊 */}
+                    {/* 中間：工令主要資訊（點擊直接進入該工令的工令明細） */}
                     <div
                       onClick={() => onSelectOrder(order.id)}
                       className="space-y-1.5 flex-1 min-w-0 cursor-pointer"
@@ -399,7 +413,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
 
                         <span className="inline-flex items-center gap-1 text-[11px] text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md">
                           <Database className="w-3 h-3" />
-                          {contractInfo ? contractInfo.name : '預設合約'}
+                          {contractInfo ? contractInfo.name : '預設標準合約'}
                         </span>
                       </div>
 
@@ -408,12 +422,6 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                       </h3>
 
                       <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
-                        {order.location && (
-                          <span className="inline-flex items-center gap-1">
-                            <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                            {order.location}
-                          </span>
-                        )}
                         <span>明細：{order.items.length} 項</span>
                         <span>
                           更新：{new Date(order.updatedAt).toLocaleDateString('zh-TW')}
@@ -421,7 +429,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                       </div>
                     </div>
 
-                    {/* 右側：金額、單筆匯出 Excel、前往 MO、刪除 */}
+                    {/* 右側：金額、編輯按鈕、刪除按鈕（已移除匯出 Excel 與前往 MO 按鈕） */}
                     <div className="flex flex-col items-end justify-between self-stretch shrink-0 gap-2">
                       <div className="text-right">
                         <div className="text-[11px] text-slate-400">工令總額</div>
@@ -430,35 +438,21 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                        {/* 單筆匯出 Excel 按鈕 */}
+                      <div className="flex items-center gap-1">
+                        {/* 編輯工令按鈕 */}
                         <button
                           type="button"
-                          title="匯出此工令 Excel"
+                          title="編輯工令"
                           onClick={(e) => {
                             e.stopPropagation();
-                            exportWorkOrdersToExcel([order]);
+                            handleOpenEditModal(order);
                           }}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-600 hover:text-white rounded-lg border border-emerald-200 transition-colors cursor-pointer"
+                          className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
                         >
-                          <FileDown className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline">匯出</span>
+                          <Pencil className="w-4 h-4" />
                         </button>
 
-                        {/* 前往 MO 按鈕 */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onSelectOrder(order.id);
-                          }}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-2xs transition-colors cursor-pointer"
-                        >
-                          <span>前往 MO</span>
-                          <ArrowRightCircle className="w-3.5 h-3.5" />
-                        </button>
-
-                        {/* 刪除按鈕 */}
+                        {/* 刪除工令按鈕 */}
                         <button
                           type="button"
                           title="刪除此工令"
@@ -482,6 +476,166 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* 建立新工令彈出視窗（已刪除施工區域欄位，並將名稱改為「工令名稱」） */}
+        {isCreateModalOpen && (
+          <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-xl border border-slate-200 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h2 className="text-base font-bold text-slate-800">建立新工令</h2>
+                <button
+                  type="button"
+                  onClick={() => setIsCreateModalOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 text-sm cursor-pointer"
+                >
+                  關閉
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateSubmit} className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    工令編號 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={woNumber}
+                    onChange={(e) => setWoNumber(e.target.value)}
+                    placeholder="請輸入工令編號"
+                    className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    工令名稱 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="請輸入工令名稱"
+                    className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    選擇合約
+                  </label>
+                  <select
+                    value={contractId}
+                    onChange={(e) => setContractId(e.target.value)}
+                    className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {contracts.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsCreateModalOpen(false)}
+                    className="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 cursor-pointer"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-xs cursor-pointer"
+                  >
+                    建立工令
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* 編輯工令彈出視窗 (Edit Modal) */}
+        {editingOrder && (
+          <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-xl border border-slate-200 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h2 className="text-base font-bold text-slate-800">編輯工令</h2>
+                <button
+                  type="button"
+                  onClick={() => setEditingOrder(null)}
+                  className="text-slate-400 hover:text-slate-600 text-sm cursor-pointer"
+                >
+                  關閉
+                </button>
+              </div>
+
+              <form onSubmit={handleEditSubmit} className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    工令編號 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editWoNumber}
+                    onChange={(e) => setEditWoNumber(e.target.value)}
+                    className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    工令名稱 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    選擇合約
+                  </label>
+                  <select
+                    value={editContractId}
+                    onChange={(e) => setEditContractId(e.target.value)}
+                    className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {contracts.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingOrder(null)}
+                    className="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 cursor-pointer"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-xs cursor-pointer"
+                  >
+                    儲存修改
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         )}
 
@@ -532,7 +686,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">
-                    合併後工令案名 <span className="text-red-500">*</span>
+                    合併後工令名稱 <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -550,7 +704,9 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                     onChange={(e) => setDeleteSourceAfterMerge(e.target.checked)}
                     className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
                   />
-                  <span>合併完成後，自動刪除原有的 {checkedWorkOrders.length} 筆來源工令</span>
+                  <span>
+                    合併完成後，自動刪除原有的 {checkedWorkOrders.length} 筆來源工令
+                  </span>
                 </label>
 
                 <div className="flex justify-end gap-2 pt-2">
@@ -565,101 +721,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                     type="submit"
                     className="px-5 py-2 rounded-xl text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white shadow-xs cursor-pointer"
                   >
-                    確認合併並前往 MO
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {/* 新增工令彈出視窗 (Create Modal) */}
-        {isCreateModalOpen && (
-          <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-xl border border-slate-200 space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <h2 className="text-base font-bold text-slate-800">建立新工令</h2>
-                <button
-                  type="button"
-                  onClick={() => setIsCreateModalOpen(false)}
-                  className="text-slate-400 hover:text-slate-600 text-sm cursor-pointer"
-                >
-                  關閉
-                </button>
-              </div>
-
-              <form onSubmit={handleCreateSubmit} className="space-y-3.5">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">
-                    工令編號 <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={woNumber}
-                    onChange={(e) => setWoNumber(e.target.value)}
-                    placeholder="例如：W622008A 或 Y630000H"
-                    className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">
-                    工令案名 / 說明 <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder="請輸入工程名稱或維修項目"
-                    className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">
-                    施工區域 / 設備位置（選填）
-                  </label>
-                  <input
-                    type="text"
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    placeholder="例如：第二供電區 / Y6 現場"
-                    className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">
-                    預設適用合約（進入 MO 明細後仍可隨時切換）
-                  </label>
-                  <select
-                    value={contractId}
-                    onChange={(e) => setContractId(e.target.value)}
-                    className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    {contracts.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} ({c.contractCode})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsCreateModalOpen(false)}
-                    className="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 cursor-pointer"
-                  >
-                    取消
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-5 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-xs cursor-pointer"
-                  >
-                    建立並前往 MO
+                    確認合併
                   </button>
                 </div>
               </form>

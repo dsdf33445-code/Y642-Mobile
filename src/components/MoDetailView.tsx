@@ -1,9 +1,11 @@
 // src/components/MoDetailView.tsx
 // ============================================================================
 // 工令明細 (MO 明細) 視圖組件
-// 1. 修正 /products.csv 資料載入：支援 UTF-8 / Big5 自動解碼與智慧欄位推斷
-// 2. 加回「匯出 Excel」按鈕，可一鍵將目前工令的 MO 明細匯出為 Excel 報表
-// 3. 支援隨時切換其他合約（讀取不同 GitHub Excel / CSV 資料庫）並自動重算單價
+// 修改重點：
+// 1. 加回「前往 MO」外部連結與「匯出特定 Excel 檔案」按鈕（項目編號、項目名稱、數量、倍率1、加成1、備註空白）
+// 2. 將「選擇合約資料庫（讀取 GitHub Excel / products.csv）」改為「選擇合約」
+// 3. 合約下拉選單不顯示 contractCode，僅顯示合約名稱
+// 4. 將「重新載入資料」按鈕簡化為純圖示按鈕
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback, memo } from 'react';
@@ -21,6 +23,7 @@ import {
   FileSpreadsheet,
   Sparkles,
   FileDown,
+  ExternalLink,
 } from 'lucide-react';
 import type {
   WorkOrder,
@@ -29,8 +32,9 @@ import type {
   MoLineItem,
 } from '../types';
 import {
+  MO_SYSTEM_URL,
   fetchContractProducts,
-  exportWorkOrdersToExcel,
+  exportMoSpecificExcel,
 } from '../constants';
 
 interface MoDetailViewProps {
@@ -146,7 +150,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       return ['ALL', ...Array.from(set)];
     }, [catalogItems]);
 
-    // 高速過濾合約資料庫中的工項（預設顯示前 100 筆，支援關鍵字即時檢索全部資料）
+    // 高速過濾合約資料庫中的工項（預設顯示前 100 筆）
     const filteredCatalog = useMemo(() => {
       const kw = catalogSearch.trim().toLowerCase();
       return catalogItems
@@ -318,7 +322,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
             尚未選擇要編輯的工令
           </h3>
           <p className="text-xs text-slate-500 max-w-sm mx-auto">
-            請先從「工令管理」點擊「前往 MO」，或直接從下方下拉選單挑選屬於您的工令。
+            請先從「工令管理」點選一筆工令，或直接從下方下拉選單挑選屬於您的工令。
           </p>
           {allWorkOrders.length > 0 ? (
             <div className="max-w-xs mx-auto pt-2">
@@ -355,7 +359,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
 
     return (
       <div className="space-y-4 pb-24">
-        {/* 頂部工令資訊、匯出 Excel 按鈕與多合約資料庫切換器 */}
+        {/* 頂部工令資訊、「前往 MO」連結、「匯出特定 Excel」與「選擇合約」 */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3.5">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <button
@@ -367,7 +371,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
               返回工令列表
             </button>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               {/* 快速切換其他工令 */}
               <select
                 value={workOrder.id}
@@ -381,15 +385,26 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                 ))}
               </select>
 
-              {/* 匯出 Excel 按鈕 */}
+              {/* 匯出特定 Excel 檔案按鈕（項目編號、項目名稱、數量、倍率1、加成1、備註空白） */}
               <button
                 type="button"
-                onClick={() => exportWorkOrdersToExcel([workOrder])}
+                onClick={() => exportMoSpecificExcel(workOrder)}
                 className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
               >
                 <FileDown className="w-3.5 h-3.5" />
                 <span>匯出 Excel</span>
               </button>
+
+              {/* 前往 MO 外部連結按鈕 */}
+              <a
+                href={MO_SYSTEM_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition-colors"
+              >
+                <span>前往 MO</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
             </div>
           </div>
 
@@ -403,11 +418,6 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                   {workOrder.title}
                 </h2>
               </div>
-              {workOrder.location && (
-                <p className="text-xs text-slate-500 mt-0.5">
-                  施工位置：{workOrder.location}
-                </p>
-              )}
             </div>
 
             <div className="text-left sm:text-right bg-slate-50 px-3.5 py-2 rounded-xl border border-slate-200/80">
@@ -420,29 +430,32 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
             </div>
           </div>
 
-          {/* 選擇其他合約（對應不同資料庫，讀取 /products.csv 或 GitHub Excel） */}
+          {/* 選擇合約（已簡化標題、移除 contractCode 顯示、並將重新載入改為圖示按鈕） */}
           <div className="bg-blue-50/60 border border-blue-200/80 rounded-xl p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">
               <label className="flex items-center gap-1.5 text-xs font-bold text-blue-900">
                 <Database className="w-4 h-4 text-blue-600" />
-                <span>選擇合約資料庫（讀取 GitHub Excel / products.csv）</span>
+                <span>選擇合約</span>
               </label>
 
+              {/* 純圖示按鈕：重新載入資料 */}
               <button
                 type="button"
                 onClick={() => loadContractDatabase(activeContract, true)}
                 disabled={isLoadingCatalog}
-                className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 hover:text-blue-900 bg-white px-2.5 py-1 rounded-lg border border-blue-200 shadow-2xs cursor-pointer disabled:opacity-50"
+                title="重新載入資料"
+                aria-label="重新載入資料"
+                className="p-1.5 text-blue-700 hover:text-blue-900 bg-white hover:bg-blue-50 rounded-lg border border-blue-200 shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
               >
                 <RefreshCw
-                  className={`w-3.5 h-3.5 ${
+                  className={`w-4 h-4 ${
                     isLoadingCatalog ? 'animate-spin' : ''
                   }`}
                 />
-                <span>重新載入資料</span>
               </button>
             </div>
 
+            {/* 下拉選單：僅顯示合約名稱，不顯示 contractCode */}
             <select
               value={workOrder.contractId}
               onChange={(e) => handleContractChange(e.target.value)}
@@ -450,7 +463,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
             >
               {contracts.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.name}（代碼：{c.contractCode}）
+                  {c.name}
                 </option>
               ))}
             </select>
@@ -506,7 +519,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
             >
               <input
                 type="text"
-                placeholder="項次/料號"
+                placeholder="項目編號"
                 value={customCode}
                 onChange={(e) => setCustomCode(e.target.value)}
                 className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg"
@@ -514,7 +527,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
               <input
                 type="text"
                 required
-                placeholder="工項名稱 *"
+                placeholder="項目名稱 *"
                 value={customName}
                 onChange={(e) => setCustomName(e.target.value)}
                 className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg"
@@ -553,7 +566,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
 
           {workOrder.items.length === 0 ? (
             <div className="text-center py-6 text-xs text-slate-400 border border-dashed border-slate-200 rounded-xl">
-              尚未加入任何 MO 明細，請從下方「合約單價資料庫」搜尋並點擊加入。
+              尚未加入任何 MO 明細，請從下方「合約工項資料庫」搜尋並點擊加入。
             </div>
           ) : (
             <div className="divide-y divide-slate-100">
@@ -688,7 +701,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
           ) : filteredCatalog.length === 0 ? (
             <div className="py-8 text-center text-xs text-slate-400">
               {catalogItems.length === 0
-                ? '目前資料庫尚無工項，請點擊上方「重新載入資料」按鈕。'
+                ? '目前資料庫尚無工項，請點擊上方重新載入圖示按鈕。'
                 : `找不到符合「${catalogSearch}」的合約工項`}
             </div>
           ) : (

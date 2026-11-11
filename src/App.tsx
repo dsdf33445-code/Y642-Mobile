@@ -1,10 +1,9 @@
 // src/App.tsx
 // ============================================================================
 // Mobile-MO 行動工令管理系統主程式
-// 完整支援：
-// 1. 工令管理、工令明細、個人帳號資料隔離
-// 2. 前往 MO、合併工令 (handleMergeOrders)、匯出 Excel
-// 3. 多合約資料庫切換（支援 /products.csv 雙編碼解析與 GitHub Excel）
+// 修改重點：
+// 1. 新增 handleEditOrder 支援工令管理列表的「編輯」功能
+// 2. 建立新工令移除施工區域 (location) 欄位
 // ============================================================================
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -12,7 +11,11 @@ import type { FC, FormEvent } from 'react';
 import { onAuthStateChanged, signInWithPopup } from 'firebase/auth';
 import { Wrench, UserCheck, LogIn } from 'lucide-react';
 import type { ActiveTab, UserProfile, WorkOrder } from './types';
-import { CONTRACT_DATABASES, STORAGE_KEYS, mergeMoLineItems } from './constants';
+import {
+  CONTRACT_DATABASES,
+  STORAGE_KEYS,
+  mergeMoLineItems,
+} from './constants';
 import {
   auth,
   provider,
@@ -130,12 +133,11 @@ export const App: FC = () => {
     setCurrentUser(profile);
   };
 
-  // 建立新工令（自動綁定目前登入者的 ownerId 並前往 MO 明細）
+  // 建立新工令（已移除 location 欄位）
   const handleCreateOrder = useCallback(
     async (data: {
       woNumber: string;
       title: string;
-      location: string;
       contractId: string;
     }) => {
       if (!currentUser) return;
@@ -144,7 +146,6 @@ export const App: FC = () => {
         id: `wo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         woNumber: data.woNumber,
         title: data.title,
-        location: data.location,
         ownerId: currentUser.uid,
         ownerName: currentUser.displayName,
         contractId: data.contractId,
@@ -162,7 +163,29 @@ export const App: FC = () => {
     [currentUser]
   );
 
-  // 合併多筆工令並自動前往合併後的 MO 明細
+  // 編輯既有工令（修改工令編號、工令名稱、選擇合約）
+  const handleEditOrder = useCallback(
+    async (data: {
+      id: string;
+      woNumber: string;
+      title: string;
+      contractId: string;
+    }) => {
+      if (!currentUser) return;
+      const target = workOrders.find((o) => o.id === data.id);
+      if (!target) return;
+
+      await saveUserWorkOrder(currentUser.uid, {
+        ...target,
+        woNumber: data.woNumber,
+        title: data.title,
+        contractId: data.contractId,
+      });
+    },
+    [currentUser, workOrders]
+  );
+
+  // 合併多筆工令並自動前往合併後的工令明細
   const handleMergeOrders = useCallback(
     async (params: {
       sourceOrderIds: string[];
@@ -178,16 +201,12 @@ export const App: FC = () => {
 
       const mergedItems = mergeMoLineItems(sourceOrders);
       const totalAmount = mergedItems.reduce((sum, i) => sum + i.subtotal, 0);
-      const mergedLocations = Array.from(
-        new Set(sourceOrders.map((o) => o.location).filter(Boolean))
-      ).join(' / ');
 
       const now = new Date().toISOString();
       const mergedOrder: WorkOrder = {
         id: `wo-merged-${Date.now()}`,
         woNumber: params.mergedWoNumber,
         title: params.mergedTitle,
-        location: mergedLocations,
         ownerId: currentUser.uid,
         ownerName: currentUser.displayName,
         contractId: sourceOrders[0].contractId || CONTRACT_DATABASES[0].id,
@@ -243,7 +262,7 @@ export const App: FC = () => {
     [currentUser]
   );
 
-  // 點擊「前往 MO」切換至工令明細分頁
+  // 點選工令卡片切換至工令明細分頁
   const handleSelectOrderAndGoDetail = useCallback((orderId: string) => {
     setSelectedOrderId(orderId);
     setActiveTab('detail');
@@ -352,9 +371,7 @@ export const App: FC = () => {
                 工令管理系統
               </h1>
               <p className="text-[11px] text-slate-500">
-                {activeTab === 'list'
-                  ? '工令管理列表（支援合併工令與匯出 Excel）'
-                  : 'MO 工令明細與合約資料庫'}
+                {activeTab === 'list' ? '工令管理' : '工令明細'}
               </p>
             </div>
           </div>
@@ -375,6 +392,7 @@ export const App: FC = () => {
             contracts={CONTRACT_DATABASES}
             onSelectOrder={handleSelectOrderAndGoDetail}
             onCreateOrder={handleCreateOrder}
+            onEditOrder={handleEditOrder}
             onMergeOrders={handleMergeOrders}
             onDeleteOrder={handleDeleteOrder}
             onToggleStatus={handleToggleStatus}

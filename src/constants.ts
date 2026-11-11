@@ -1,12 +1,21 @@
 // src/constants.ts
 // ============================================================================
-// 系統常數、多合約資料庫設定、/products.csv 雙編碼解析引擎與 Excel 匯出工具
-// 1. 自動偵測 UTF-8 與 Big5 (CP950) 編碼，徹底解決 /products.csv 亂碼或載入 0 筆問題
-// 2. 支援表頭關鍵字比對 + 位置自動推斷雙重機制，相容任何 CSV / Excel 欄位格式
-// 3. 提供單筆工令與多筆合併工令的 Excel (.xlsx / .csv) 匯出功能
+// 系統常數、多合約資料庫設定、/products.csv 雙編碼解析引擎與特定格式 Excel 匯出工具
 // ============================================================================
 
-import type { ContractConfig, ContractProductItem, WorkOrder, MoLineItem } from './types';
+import type {
+  ContractConfig,
+  ContractProductItem,
+  WorkOrder,
+  MoLineItem,
+} from './types';
+
+/**
+ * 「前往 MO」外部系統連結網址
+ * 可在 .env 設定 VITE_MO_SYSTEM_URL，或直接修改下方預設網址字串
+ */
+export const MO_SYSTEM_URL: string =
+  import.meta.env.VITE_MO_SYSTEM_URL || 'https://erp.csc.com.tw/';
 
 /**
  * 動態解析靜態資源路徑（相容根目錄 / 與子路徑部署）
@@ -65,7 +74,6 @@ interface SheetJsRuntime {
       worksheet: unknown,
       opts?: { header?: number; defval?: string }
     ) => T[];
-    json_to_sheet: (data: Record<string, unknown>[]) => unknown;
     aoa_to_sheet: (data: unknown[][]) => unknown;
     book_new: () => unknown;
     book_append_sheet: (wb: unknown, ws: unknown, name: string) => void;
@@ -85,7 +93,6 @@ export const loadSheetJs = async (): Promise<SheetJsRuntime> => {
 
 /**
  * 將 ArrayBuffer 自動識別編碼（UTF-8 或台灣 Excel 預設的 Big5）並轉為字串
- * 徹底解決 /products.csv 因 Big5 編碼導致中文變亂碼而載入 0 筆的問題
  */
 export const decodeArrayBufferAuto = (buffer: ArrayBuffer): string => {
   try {
@@ -124,19 +131,19 @@ const COMMON_UNITS = new Set([
 
 /**
  * 將二維陣列（來自 CSV 或 Excel 工作表）智慧轉換為合約工項陣列
- * 同時支援「標準表頭名稱對應」與「無表頭/特殊表頭位置自動推斷」
  */
 export const convertMatrixToProducts = (
   rows: string[][],
   sourceCategory = '預設單價表'
 ): ContractProductItem[] => {
   const nonEmptyRows = rows
-    .map((r) => r.map((cell) => String(cell ?? '').replace(/^\uFEFF/, '').trim()))
+    .map((r) =>
+      r.map((cell) => String(cell ?? '').replace(/^\uFEFF/, '').trim())
+    )
     .filter((r) => r.some((cell) => cell !== ''));
 
   if (nonEmptyRows.length === 0) return [];
 
-  // 1. 尋找表頭列（掃描前 10 列，找出包含關鍵字或欄位數 >= 2 的第一列）
   let headerRowIndex = 0;
   const headerKeywords = [
     'code', 'id', 'item', 'no', '項次', '料號', '編號', '代號', '代碼', '工項編號',
@@ -159,7 +166,6 @@ export const convertMatrixToProducts = (
 
   const headerCells = nonEmptyRows[headerRowIndex].map((c) => c.toLowerCase());
 
-  // 判斷第 headerRowIndex 列是否真的是表頭（若該列含有純數字單價，代表第 0 列直接就是資料列！）
   const isFirstRowActuallyData =
     headerRowIndex === 0 &&
     !headerCells.some((c) => headerKeywords.some((kw) => c.includes(kw))) &&
@@ -167,15 +173,12 @@ export const convertMatrixToProducts = (
 
   const startDataIndex = isFirstRowActuallyData ? 0 : headerRowIndex + 1;
 
-  // 2. 找出各欄位索引
   const findColIdx = (candidates: string[]): number => {
     if (isFirstRowActuallyData) return -1;
-    // 先進行精準相等比對
     for (const cand of candidates) {
       const idx = headerCells.findIndex((h) => h === cand);
       if (idx !== -1) return idx;
     }
-    // 再進行包含比對
     for (const cand of candidates) {
       const idx = headerCells.findIndex((h) => h.includes(cand));
       if (idx !== -1) return idx;
@@ -183,8 +186,8 @@ export const convertMatrixToProducts = (
     return -1;
   };
 
-  const codeIdx = findColIdx(['料號', '工項編號', '代號', '編號', '代碼', '項次', 'code', 'id', 'no', 'item']);
-  const nameIdx = findColIdx(['工項名稱', '項目名稱', '工作項目', '品名', '名稱', '工項', '項目', '內容', 'name', 'title', 'product', 'description']);
+  const codeIdx = findColIdx(['項目編號', '料號', '工項編號', '代號', '編號', '代碼', '項次', 'code', 'id', 'no', 'item']);
+  const nameIdx = findColIdx(['項目名稱', '工項名稱', '工作項目', '品名', '名稱', '工項', '項目', '內容', 'name', 'title', 'product', 'description']);
   const specIdx = findColIdx(['規格', '規範', '型號', '尺寸', '說明', '備註', 'spec', 'model', 'specification']);
   const unitIdx = findColIdx(['計價單位', '單位', 'unit', 'uom']);
   const priceIdx = findColIdx(['合約單價', '契約單價', '發包單價', '單價', '價格', '複價', '金額', 'unitprice', 'unit_price', 'price', 'cost', 'amount']);
@@ -205,7 +208,6 @@ export const convertMatrixToProducts = (
     const category =
       catIdx !== -1 && row[catIdx] ? row[catIdx] : sourceCategory;
 
-    // 3. 【位置自動推斷保底機制】：若表頭未命中導致沒有名稱或單價，自動依儲存格特徵推斷
     if (!name || priceVal === null) {
       const usedIndices = new Set<number>();
       if (codeIdx !== -1) usedIndices.add(codeIdx);
@@ -214,13 +216,11 @@ export const convertMatrixToProducts = (
       if (unitIdx !== -1) usedIndices.add(unitIdx);
       if (priceIdx !== -1) usedIndices.add(priceIdx);
 
-      // (a) 推斷單價欄位（從右往左找第一個合理數值欄）
       if (priceVal === null) {
         for (let c = row.length - 1; c >= 0; c--) {
           if (usedIndices.has(c)) continue;
           const num = parseNumericValue(row[c]);
           if (num !== null && num >= 0) {
-            // 若全列只有第 0 欄是數字，第 0 欄通常是項次而非單價
             if (c === 0 && row.length > 2) continue;
             priceVal = num;
             usedIndices.add(c);
@@ -229,12 +229,14 @@ export const convertMatrixToProducts = (
         }
       }
 
-      // (b) 推斷單位欄位
       if (!unit) {
         for (let c = 0; c < row.length; c++) {
           if (usedIndices.has(c)) continue;
           const cellVal = row[c].toLowerCase();
-          if (COMMON_UNITS.has(cellVal) || (row[c].length === 1 && /[\u4e00-\u9fa5]/.test(row[c]))) {
+          if (
+            COMMON_UNITS.has(cellVal) ||
+            (row[c].length === 1 && /[\u4e00-\u9fa5]/.test(row[c]))
+          ) {
             unit = row[c];
             usedIndices.add(c);
             break;
@@ -242,7 +244,6 @@ export const convertMatrixToProducts = (
         }
       }
 
-      // (c) 推斷代號/項次與工項名稱
       const remainingTextCols: { idx: number; text: string }[] = [];
       for (let c = 0; c < row.length; c++) {
         if (!usedIndices.has(c) && row[c] !== '') {
@@ -251,7 +252,6 @@ export const convertMatrixToProducts = (
       }
 
       if (!code && remainingTextCols.length >= 2) {
-        // 第一個較短的欄位視為項次/料號
         if (remainingTextCols[0].text.length <= 16) {
           code = remainingTextCols[0].text;
           remainingTextCols.shift();
@@ -268,16 +268,21 @@ export const convertMatrixToProducts = (
       }
     }
 
-    // 過濾純表頭重複列或完全無效的空列
     if (!name && (priceVal === null || priceVal === 0)) {
       continue;
     }
-    if (name === '名稱' || name === '品名' || name === '工項名稱' || name.toLowerCase() === 'name') {
+    if (
+      name === '名稱' ||
+      name === '品名' ||
+      name === '工項名稱' ||
+      name === '項目名稱' ||
+      name.toLowerCase() === 'name'
+    ) {
       continue;
     }
 
     items.push({
-      code: code || `${ r - startDataIndex + 1 }`,
+      code: code || `${r - startDataIndex + 1}`,
       name: name || `工項 #${r - startDataIndex + 1}`,
       spec: spec || '',
       unit: unit || '式',
@@ -290,7 +295,7 @@ export const convertMatrixToProducts = (
 };
 
 /**
- * 解析 CSV 字串為二維陣列（支援雙引號、換行與逗號/Tab 分隔）
+ * 解析 CSV 字串為二維陣列
  */
 export const parseCsvToMatrix = (csvText: string): string[][] => {
   const rows: string[][] = [];
@@ -349,8 +354,14 @@ export const parseCsvToMatrix = (csvText: string): string[][] => {
  */
 export const fetchContractProducts = async (
   contract: ContractConfig
-): Promise<{ items: ContractProductItem[]; isFallback: boolean; loadedUrl: string }> => {
-  const tryFetchBuffer = async (rawUrl: string): Promise<{ buffer: ArrayBuffer; url: string }> => {
+): Promise<{
+  items: ContractProductItem[];
+  isFallback: boolean;
+  loadedUrl: string;
+}> => {
+  const tryFetchBuffer = async (
+    rawUrl: string
+  ): Promise<{ buffer: ArrayBuffer; url: string }> => {
     const resolvedUrl = resolveLocalAssetUrl(rawUrl);
     const response = await fetch(resolvedUrl, { cache: 'no-cache' });
     if (!response.ok) {
@@ -369,7 +380,10 @@ export const fetchContractProducts = async (
     buffer = res.buffer;
     loadedUrl = res.url;
   } catch (err) {
-    console.warn(`讀取 [${contract.githubExcelUrl}] 失敗，切換至備援 /products.csv：`, err);
+    console.warn(
+      `讀取 [${contract.githubExcelUrl}] 失敗，切換至備援 /products.csv：`,
+      err
+    );
     const fallbackPath = contract.fallbackLocalUrl || '/products.csv';
     const res = await tryFetchBuffer(fallbackPath);
     buffer = res.buffer;
@@ -377,24 +391,22 @@ export const fetchContractProducts = async (
     isFallback = contract.githubExcelUrl !== fallbackPath;
   }
 
-  // 檢查檔案前 4 個 Bytes 是否為 ZIP/XLSX 或 OLE/XLS 二進位檔頭
   const uint8 = new Uint8Array(buffer.slice(0, 4));
-  const isZipXlsx = uint8[0] === 0x50 && uint8[1] === 0x4b; // 'PK' (.xlsx)
-  const isOleXls = uint8[0] === 0xd0 && uint8[1] === 0xcf; // OLE2 (.xls)
+  const isZipXlsx = uint8[0] === 0x50 && uint8[1] === 0x4b;
+  const isOleXls = uint8[0] === 0xd0 && uint8[1] === 0xcf;
 
   if (!isZipXlsx && !isOleXls) {
-    // 為 CSV 純文字檔案（自動處理 UTF-8 與 Big5 編碼）
     const csvText = decodeArrayBufferAuto(buffer);
-    // 防呆：若因為 SPA 路由回傳了 index.html，拋出錯誤提示
     if (csvText.trim().toLowerCase().startsWith('<!doctype html')) {
-      throw new Error('讀取到 HTML 頁面而非 CSV 資料，請確認 public/products.csv 檔案是否存在。');
+      throw new Error(
+        '讀取到 HTML 頁面而非 CSV 資料，請確認 public/products.csv 檔案是否存在。'
+      );
     }
     const matrix = parseCsvToMatrix(csvText);
     const items = convertMatrixToProducts(matrix, contract.contractCode);
     return { items, isFallback, loadedUrl };
   }
 
-  // 為 .xlsx 或 .xls 二進位檔案，使用動態 SheetJS 解析所有工作表
   const XLSX = await loadSheetJs();
   const workbook = XLSX.read(buffer, { type: 'array', codepage: 65001 });
   const allItems: ContractProductItem[] = [];
@@ -402,7 +414,6 @@ export const fetchContractProducts = async (
   workbook.SheetNames.forEach((sheetName) => {
     const worksheet = workbook.Sheets[sheetName];
     if (!worksheet) return;
-    // 以 header: 1 取得原始二維陣列，交由智慧推斷引擎處理
     const matrix = XLSX.utils.sheet_to_json<string[]>(worksheet, {
       header: 1,
       defval: '',
@@ -444,84 +455,46 @@ export const mergeMoLineItems = (orders: WorkOrder[]): MoLineItem[] => {
 };
 
 /**
- * 匯出單筆或多筆工令為 Excel (.xlsx)，若處於離線環境則自動匯出為含 UTF-8 BOM 的 Excel CSV
+ * 匯出 MO 專用特定格式 Excel 檔案（供工令明細頁使用）
+ * 欄位固定依序為：項目編號、項目名稱、數量、倍率(預設 1)、加成(預設 1)、備註(空白)
  */
-export const exportWorkOrdersToExcel = async (
-  orders: WorkOrder[],
-  filenamePrefix = 'MO工令明細'
+export const exportMoSpecificExcel = async (
+  workOrder: WorkOrder
 ): Promise<void> => {
-  if (orders.length === 0) return;
+  if (!workOrder || workOrder.items.length === 0) {
+    window.alert('目前工令尚無 MO 明細項目可供匯出！');
+    return;
+  }
 
-  const isSingle = orders.length === 1;
-  const mergedItems = isSingle ? orders[0].items : mergeMoLineItems(orders);
-  const totalSum = mergedItems.reduce((sum, i) => sum + i.subtotal, 0);
-  const woTitle = isSingle
-    ? `${orders[0].woNumber}_${orders[0].title}`
-    : `合併工令(${orders.map((o) => o.woNumber).join('+')})`;
+  const safeFilename = `${workOrder.woNumber}_${workOrder.title}`.replace(
+    /[\\/:*?"<>|]/g,
+    '_'
+  );
 
-  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const safeFilename = `${filenamePrefix}_${woTitle.replace(/[\\/:*?"<>|]/g, '_')}_${dateStr}`;
-
-  // 組裝報表二維陣列資料
+  // 特定 Excel 欄位格式：項目編號、項目名稱、數量、倍率(1)、加成(1)、備註('')
   const sheetRows: (string | number)[][] = [
-    ['工令編號', orders.map((o) => o.woNumber).join(', '), '建立人員', orders[0].ownerName || orders[0].ownerId],
-    ['工程案名', orders.map((o) => o.title).join(' / '), '匯出日期', new Date().toLocaleDateString('zh-TW')],
-    ['施工位置', orders.map((o) => o.location || '-').join(', '), '總計金額', totalSum],
-    [],
-    ['項次', '料號 / 代號', '工項名稱', '規格說明', '單位', '單價', '數量', '複價 (小計)', '備註'],
+    ['項目編號', '項目名稱', '數量', '倍率', '加成', '備註'],
   ];
 
-  mergedItems.forEach((item, index) => {
+  workOrder.items.forEach((item) => {
     sheetRows.push([
-      index + 1,
       item.code,
       item.name,
-      item.spec || '',
-      item.unit,
-      item.unitPrice,
       item.quantity,
-      item.subtotal,
-      item.remark || '',
+      1,
+      1,
+      '',
     ]);
   });
-
-  sheetRows.push([]);
-  sheetRows.push(['', '', '', '', '', '', '總計金額', totalSum, '']);
 
   try {
     const XLSX = await loadSheetJs();
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(sheetRows);
-    XLSX.utils.book_append_sheet(wb, ws, 'MO工令明細');
-
-    // 若為多筆工令合併匯出，額外附上「各工令原始明細」分頁
-    if (orders.length > 1) {
-      const breakdownRows: (string | number)[][] = [
-        ['來源工令編號', '來源工令案名', '料號 / 代號', '工項名稱', '規格', '單位', '單價', '數量', '小計'],
-      ];
-      orders.forEach((o) => {
-        o.items.forEach((it) => {
-          breakdownRows.push([
-            o.woNumber,
-            o.title,
-            it.code,
-            it.name,
-            it.spec || '',
-            it.unit,
-            it.unitPrice,
-            it.quantity,
-            it.subtotal,
-          ]);
-        });
-      });
-      const wsBreakdown = XLSX.utils.aoa_to_sheet(breakdownRows);
-      XLSX.utils.book_append_sheet(wb, wsBreakdown, '各工令原始明細');
-    }
-
+    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
     XLSX.writeFile(wb, `${safeFilename}.xlsx`);
   } catch (err) {
-    console.warn('無法載入線上 SheetJS，自動以 UTF-8 BOM CSV 格式匯出 Excel：', err);
-    // 備援：輸出帶有 \uFEFF BOM 的 CSV，Excel 直接雙擊打開不會亂碼
+    console.warn('無法載入線上 SheetJS，自動以 UTF-8 BOM CSV 格式匯出：', err);
     const csvContent =
       '\uFEFF' +
       sheetRows
