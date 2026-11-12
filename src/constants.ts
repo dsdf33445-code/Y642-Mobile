@@ -1,6 +1,6 @@
 // src/constants.ts
 // ============================================================================
-// 系統常數、多合約資料庫設定、/products.csv 雙編碼解析引擎與特定格式 Excel 匯出工具
+// 系統常數、多合約資料庫設定、CSV 雙編碼解析引擎與特定格式 Excel 匯出工具
 // ============================================================================
 
 import type {
@@ -11,11 +11,30 @@ import type {
 } from './types';
 
 /**
- * 「前往 MO」外部系統連結網址
- * 可在 .env 設定 VITE_MO_SYSTEM_URL，或直接修改下方預設網址字串
+ * 1. 「前往 MO」按鈕點擊後跳轉的目標網址
  */
 export const MO_SYSTEM_URL: string =
-  import.meta.env.VITE_MO_SYSTEM_URL || 'https://mwweb.csc.com.tw/MIS/MO/MO_W6X_WebSite/MOXD/MOAUXD.aspx';
+  import.meta.env.VITE_MO_SYSTEM_URL || 'https://cs.csc.com.tw/';
+
+/**
+ * 2. 「選擇合約」下拉選單清單（對應 public/products_01.csv 與 public/products_02.csv）
+ */
+export const CONTRACT_DATABASES: ContractConfig[] = [
+  {
+    id: 'contract-1',
+    name: '合約一 (products_01.csv)',
+    contractCode: 'C01',
+    githubExcelUrl: '/products_01.csv',
+    fallbackLocalUrl: '/products_01.csv',
+  },
+  {
+    id: 'contract-2',
+    name: '合約二 (products_02.csv)',
+    contractCode: 'C02',
+    githubExcelUrl: '/products_02.csv',
+    fallbackLocalUrl: '/products_02.csv',
+  },
+];
 
 /**
  * 動態解析靜態資源路徑（相容根目錄 / 與子路徑部署）
@@ -31,35 +50,15 @@ export const resolveLocalAssetUrl = (path: string): string => {
 };
 
 /**
- * 多重合約資料庫清單
- */
-export const CONTRACT_DATABASES: ContractConfig[] = [
-  {
-    id: 'contract-default',
-    name: '協茂',
-    contractCode: 'STD-01',
-    githubExcelUrl: '/products_01.csv',
-    fallbackLocalUrl: '/products_01.csv',
-  },
-  {
-    id: 'contract-electrical-2026',
-    name: '總部大樓低壓電氣設備維修保養',
-    contractCode: 'ELEC-115',
-    githubExcelUrl: '/products_02.csv',
-    fallbackLocalUrl: '/products_02.csv',
-  },
-];
-
-/**
  * 本地儲存 (LocalStorage) 的 Key 常數定義
  */
 export const STORAGE_KEYS = {
-  CURRENT_USER: 'mobile_mo_current_user_v2',
-  WORK_ORDERS_PREFIX: 'mobile_mo_work_orders_v2_',
+  CURRENT_USER: 'mobile_mo_google_user_v3',
+  WORK_ORDERS_PREFIX: 'mobile_mo_work_orders_v3_',
 };
 
 /**
- * 動態載入之 SheetJS 介面定義（不需安裝於 package.json，直接於瀏覽器端載入）
+ * 動態載入之 SheetJS 介面定義
  */
 interface SheetJsRuntime {
   read: (
@@ -92,7 +91,7 @@ export const loadSheetJs = async (): Promise<SheetJsRuntime> => {
 };
 
 /**
- * 將 ArrayBuffer 自動識別編碼（UTF-8 或台灣 Excel 預設的 Big5）並轉為字串
+ * 將 ArrayBuffer 自動識別編碼（UTF-8 或 Big5）並轉為字串
  */
 export const decodeArrayBufferAuto = (buffer: ArrayBuffer): string => {
   try {
@@ -109,7 +108,7 @@ export const decodeArrayBufferAuto = (buffer: ArrayBuffer): string => {
 };
 
 /**
- * 判斷字串是否為純數值（允許千分位逗號、貨幣符號與小數點）
+ * 判斷字串是否為純數值
  */
 const parseNumericValue = (val: string): number | null => {
   const cleaned = val.replace(/[$,，NT元\s]/g, '').trim();
@@ -120,7 +119,7 @@ const parseNumericValue = (val: string): number | null => {
 };
 
 /**
- * 常見工程計價單位集合（用於無標題或特殊標題時的欄位位置自動推斷）
+ * 常見工程計價單位集合
  */
 const COMMON_UNITS = new Set([
   '式', 'm', 'm2', 'm3', 'pc', 'pcs', 'set', 'ea', 'kg', 'ton', 'l',
@@ -350,7 +349,7 @@ export const parseCsvToMatrix = (csvText: string): string[][] => {
 };
 
 /**
- * 從指定合約設定讀取並解析 GitHub Excel (.xlsx / .xls) 或本地 /products.csv
+ * 從指定合約設定讀取並解析 GitHub Excel (.xlsx / .xls) 或本地 CSV
  */
 export const fetchContractProducts = async (
   contract: ContractConfig
@@ -380,11 +379,8 @@ export const fetchContractProducts = async (
     buffer = res.buffer;
     loadedUrl = res.url;
   } catch (err) {
-    console.warn(
-      `讀取 [${contract.githubExcelUrl}] 失敗，切換至備援 /products.csv：`,
-      err
-    );
-    const fallbackPath = contract.fallbackLocalUrl || '/products.csv';
+    console.warn(`讀取 [${contract.githubExcelUrl}] 失敗，切換至備援檔案：`, err);
+    const fallbackPath = contract.fallbackLocalUrl || '/products_01.csv';
     const res = await tryFetchBuffer(fallbackPath);
     buffer = res.buffer;
     loadedUrl = res.url;
@@ -399,7 +395,7 @@ export const fetchContractProducts = async (
     const csvText = decodeArrayBufferAuto(buffer);
     if (csvText.trim().toLowerCase().startsWith('<!doctype html')) {
       throw new Error(
-        '讀取到 HTML 頁面而非 CSV 資料，請確認 public/products.csv 檔案是否存在。'
+        '讀取到 HTML 頁面而非 CSV 資料，請確認 public 目錄下的 CSV 檔案是否存在。'
       );
     }
     const matrix = parseCsvToMatrix(csvText);
@@ -426,7 +422,7 @@ export const fetchContractProducts = async (
 };
 
 /**
- * 合併多筆工令的 MO 明細項目（相同料號+名稱自動累加數量並重算小計）
+ * 合併多筆工令的 MO 明細項目（相同料號+名稱自動累加數量，上限 999，並依項目編號排序）
  */
 export const mergeMoLineItems = (orders: WorkOrder[]): MoLineItem[] => {
   const mergedMap = new Map<string, MoLineItem>();
@@ -436,27 +432,38 @@ export const mergeMoLineItems = (orders: WorkOrder[]): MoLineItem[] => {
       const key = `${item.code.trim()}__${item.name.trim()}__${item.unitPrice}`;
       const existing = mergedMap.get(key);
       if (existing) {
-        const nextQty = Number((existing.quantity + item.quantity).toFixed(2));
+        const nextQty = Math.min(
+          999,
+          Math.max(1, Math.round(existing.quantity + item.quantity))
+        );
         mergedMap.set(key, {
           ...existing,
           quantity: nextQty,
           subtotal: Math.round(existing.unitPrice * nextQty),
         });
       } else {
+        const safeQty = Math.min(999, Math.max(1, Math.round(item.quantity)));
         mergedMap.set(key, {
           ...item,
           id: `merged-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          quantity: safeQty,
+          subtotal: Math.round(item.unitPrice * safeQty),
         });
       }
     });
   });
 
-  return Array.from(mergedMap.values());
+  return Array.from(mergedMap.values()).sort((a, b) =>
+    a.code.localeCompare(b.code, undefined, {
+      numeric: true,
+      sensitivity: 'base',
+    })
+  );
 };
 
 /**
- * 匯出 MO 專用特定格式 Excel 檔案（供工令明細頁使用）
- * 欄位固定依序為：項目編號、項目名稱、數量、倍率(預設 1)、加成(預設 1)、備註(空白)
+ * 匯出 MO 專用特定格式 Excel 檔案
+ * 欄位固定依序為：項目編號、項目名稱、數量、倍率(1)、加成(1)、備註(空白)
  */
 export const exportMoSpecificExcel = async (
   workOrder: WorkOrder
@@ -471,20 +478,20 @@ export const exportMoSpecificExcel = async (
     '_'
   );
 
-  // 特定 Excel 欄位格式：項目編號、項目名稱、數量、倍率(1)、加成(1)、備註('')
+  // 匯出前確保依照項目編號排列
+  const sortedItems = [...workOrder.items].sort((a, b) =>
+    a.code.localeCompare(b.code, undefined, {
+      numeric: true,
+      sensitivity: 'base',
+    })
+  );
+
   const sheetRows: (string | number)[][] = [
     ['項目編號', '項目名稱', '數量', '倍率', '加成', '備註'],
   ];
 
-  workOrder.items.forEach((item) => {
-    sheetRows.push([
-      item.code,
-      item.name,
-      item.quantity,
-      1,
-      1,
-      '',
-    ]);
+  sortedItems.forEach((item) => {
+    sheetRows.push([item.code, item.name, item.quantity, 1, 1, '']);
   });
 
   try {
