@@ -14,7 +14,7 @@ import type {
  * 1. 「前往 MO」按鈕點擊後跳轉的目標網址
  */
 export const MO_SYSTEM_URL: string =
-  import.meta.env.VITE_MO_SYSTEM_URL || 'https://cs.csc.com.tw/';
+  import.meta.env.VITE_MO_SYSTEM_URL || 'https://mwweb.csc.com.tw/MIS/MO/MO_W6X_WebSite/MOXD/MOAUXD.aspx';
 
 /**
  * 2. 「選擇合約」下拉選單清單（對應 public/products_01.csv 與 public/products_02.csv）
