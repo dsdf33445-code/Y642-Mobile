@@ -2,10 +2,9 @@
 // ============================================================================
 // 工令明細 (MO 明細) 視圖組件
 // 本次更新重點：
-// 1. 刪除最上方工令切換下拉選單
-// 2. 刪除「+ 手動新增非合約工項」按鈕與表單
-// 3. 新增項目改回右下角「浮動按鈕 (FAB)」，點擊後彈出「新增項目視窗 (Modal)」，
-//    避免明細項目太多時需要往下滑很久才能新增
+// 1. 新增項目視窗中，移除原本直接 +1 的「+ 加入」按鈕
+// 2. 改為「點擊項目列」後，於該列展開「數量輸入框 (1~999)」與「加入按鈕」
+// 3. 輸入完數量並點擊「加入」按鈕（或按 Enter 鍵）後，才正式將該項目與數量加入明細
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback, memo } from 'react';
@@ -89,6 +88,12 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
     const [catalogSearch, setCatalogSearch] = useState<string>('');
     const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
 
+    // 新增項目視窗內：目前點擊展開的項目識別碼與待加入數量輸入狀態
+    const [selectedCatalogKey, setSelectedCatalogKey] = useState<string | null>(
+      null
+    );
+    const [pendingAddQty, setPendingAddQty] = useState<string>('1');
+
     // 刪除單筆 MO 明細確認視窗狀態
     const [deletingItem, setDeletingItem] = useState<MoLineItem | null>(null);
 
@@ -159,6 +164,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       if (activeContract) {
         loadContractDatabase(activeContract, false);
         setSelectedCategory('ALL');
+        setSelectedCatalogKey(null);
       }
     }, [activeContract, loadContractDatabase]);
 
@@ -261,9 +267,24 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       commitOrderItems(updatedItems, newContractId);
     };
 
-    // 從彈出視窗點擊「+ 加入」帶入 MO 明細（最高數量限制 999，並自動按編號排序）
-    const handleAddFromCatalog = (product: ContractProductItem) => {
+    // 點擊合約項目列：展開該列的數量輸入框與加入按鈕
+    const handleSelectCatalogRow = (rowKey: string) => {
+      if (selectedCatalogKey === rowKey) {
+        setSelectedCatalogKey(null);
+      } else {
+        setSelectedCatalogKey(rowKey);
+        setPendingAddQty('1');
+      }
+    };
+
+    // 輸入完數量後，點擊「加入」按鈕將指定數量帶入 MO 明細（最高限制 999，並自動按編號排序）
+    const handleAddFromCatalog = (
+      product: ContractProductItem,
+      qtyToAdd: number
+    ) => {
       if (!workOrder) return;
+      const safeAddQty = clampQuantity(qtyToAdd);
+
       const existingIndex = workOrder.items.findIndex(
         (i) => i.code === product.code && i.name === product.name
       );
@@ -272,7 +293,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       if (existingIndex >= 0) {
         nextItems = workOrder.items.map((item, idx) => {
           if (idx !== existingIndex) return item;
-          const nextQty = clampQuantity(item.quantity + 1);
+          const nextQty = clampQuantity(item.quantity + safeAddQty);
           return {
             ...item,
             quantity: nextQty,
@@ -287,13 +308,16 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
           spec: product.spec,
           unit: product.unit || '式',
           unitPrice: product.unitPrice,
-          quantity: 1,
-          subtotal: Math.round(product.unitPrice),
+          quantity: safeAddQty,
+          subtotal: Math.round(product.unitPrice * safeAddQty),
         };
         nextItems = [...workOrder.items, newItem];
       }
 
       commitOrderItems(nextItems);
+      // 加入完成後自動收起該列的數量輸入框並重置預設數量為 1
+      setSelectedCatalogKey(null);
+      setPendingAddQty('1');
     };
 
     // 確認刪除單筆 MO 明細
@@ -368,7 +392,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
 
     return (
       <div className="space-y-4 pb-28">
-        {/* 頂部工令資訊、「前往 MO」連結、「匯出 Excel」與「選擇合約」（已刪除最上方工令切換下拉選單） */}
+        {/* 頂部工令資訊、「前往 MO」連結、「匯出 Excel」與「選擇合約」 */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3.5">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <button
@@ -488,7 +512,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
           </div>
         </div>
 
-        {/* 已選入此工令的 MO 明細清單（已刪除「+ 手動新增非合約工項」） */}
+        {/* 已選入此工令的 MO 明細清單 */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
@@ -502,7 +526,10 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
               <p>尚未加入任何 MO 明細項目</p>
               <button
                 type="button"
-                onClick={() => setIsAddModalOpen(true)}
+                onClick={() => {
+                  setSelectedCatalogKey(null);
+                  setIsAddModalOpen(true);
+                }}
                 className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 px-3.5 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -606,7 +633,10 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
         {/* 右下角浮動按鈕 (FAB)：點擊跳出「新增項目視窗」 */}
         <button
           type="button"
-          onClick={() => setIsAddModalOpen(true)}
+          onClick={() => {
+            setSelectedCatalogKey(null);
+            setIsAddModalOpen(true);
+          }}
           title="新增項目"
           className="fixed bottom-20 right-5 z-30 inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-4 py-3.5 rounded-full shadow-lg hover:shadow-xl transition-all cursor-pointer font-semibold text-sm"
         >
@@ -625,12 +655,15 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                     新增項目
                   </h3>
                   <p className="text-[11px] text-slate-500">
-                    目前合約：{activeContract?.name}（共 {catalogItems.length} 筆工項）
+                    點擊項目列即可輸入數量並加入明細（共 {catalogItems.length} 筆工項）
                   </p>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setIsAddModalOpen(false)}
+                  onClick={() => {
+                    setSelectedCatalogKey(null);
+                    setIsAddModalOpen(false);
+                  }}
                   className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-xl transition-colors cursor-pointer"
                 >
                   <X className="w-5 h-5" />
@@ -646,14 +679,20 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                       type="text"
                       autoFocus
                       value={catalogSearch}
-                      onChange={(e) => setCatalogSearch(e.target.value)}
+                      onChange={(e) => {
+                        setCatalogSearch(e.target.value);
+                        setSelectedCatalogKey(null);
+                      }}
                       placeholder="輸入項目編號、名稱或規格快速搜尋..."
                       className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     {catalogSearch && (
                       <button
                         type="button"
-                        onClick={() => setCatalogSearch('')}
+                        onClick={() => {
+                          setCatalogSearch('');
+                          setSelectedCatalogKey(null);
+                        }}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
                       >
                         <X className="w-4 h-4" />
@@ -664,7 +703,10 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                   {categories.length > 2 && (
                     <select
                       value={selectedCategory}
-                      onChange={(e) => setSelectedCategory(e.target.value)}
+                      onChange={(e) => {
+                        setSelectedCategory(e.target.value);
+                        setSelectedCatalogKey(null);
+                      }}
                       className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-700"
                     >
                       {categories.map((cat) => (
@@ -677,7 +719,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                 </div>
               </div>
 
-              {/* 合約工項捲動列表 */}
+              {/* 合約工項捲動列表（點擊項目列跳出數量輸入框與加入按鈕） */}
               <div className="flex-1 overflow-y-auto divide-y divide-slate-100 px-3.5 py-2">
                 {isLoadingCatalog ? (
                   <div className="py-12 text-center text-xs text-slate-500">
@@ -691,46 +733,163 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                   </div>
                 ) : (
                   filteredCatalog.map((prod, idx) => {
+                    const rowKey = `${prod.code}__${prod.name}__${idx}`;
+                    const isSelectedRow = selectedCatalogKey === rowKey;
                     const addedQty =
                       addedQtyMap.get(`${prod.code}__${prod.name}`) || 0;
+                    const parsedPendingQty = clampQuantity(
+                      parseInt(pendingAddQty, 10) || 1
+                    );
 
                     return (
                       <div
-                        key={`${prod.code}-${idx}`}
-                        className="py-2.5 flex items-center justify-between gap-3 hover:bg-slate-50/80 px-2 rounded-xl transition-colors"
+                        key={rowKey}
+                        onClick={() => handleSelectCatalogRow(rowKey)}
+                        className={`py-2.5 px-3 rounded-xl transition-all cursor-pointer ${
+                          isSelectedRow
+                            ? 'bg-blue-50/70 ring-1 ring-blue-300 my-1 shadow-2xs'
+                            : 'hover:bg-slate-50/90'
+                        }`}
                       >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-mono text-[11px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200/60">
-                              {prod.code}
-                            </span>
-                            <span className="text-sm font-bold text-slate-800 truncate">
-                              {prod.name}
-                            </span>
-                            {addedQty > 0 && (
-                              <span className="text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.2 rounded-md">
-                                已加: {addedQty}
+                        {/* 項目列主資訊 */}
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono text-[11px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200/60">
+                                {prod.code}
                               </span>
-                            )}
+                              <span className="text-sm font-bold text-slate-800 truncate">
+                                {prod.name}
+                              </span>
+                              {addedQty > 0 && (
+                                <span className="text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.2 rounded-md">
+                                  已加: {addedQty}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
+                              {prod.spec && (
+                                <span className="truncate">
+                                  規格：{prod.spec}
+                                </span>
+                              )}
+                              <span className="font-mono font-semibold text-slate-700">
+                                單價：${prod.unitPrice.toLocaleString()}
+                              </span>
+                            </div>
                           </div>
-                          <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
-                            {prod.spec && (
-                              <span className="truncate">規格：{prod.spec}</span>
-                            )}
-                            <span className="font-mono font-semibold text-slate-700">
-                              單價：${prod.unitPrice.toLocaleString()}
+
+                          {!isSelectedRow && (
+                            <span className="text-[11px] text-slate-400 shrink-0">
+                              點擊輸入數量
                             </span>
-                          </div>
+                          )}
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => handleAddFromCatalog(prod)}
-                          className="shrink-0 inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-3 py-1.5 rounded-xl text-xs font-semibold shadow-2xs transition-all cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>加入</span>
-                        </button>
+                        {/* 點擊項目列後展開：數量輸入框與「加入」按鈕 */}
+                        {isSelectedRow && (
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-2.5 pt-2.5 border-t border-blue-200/70 flex items-center justify-between gap-2 flex-wrap"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-semibold text-slate-700">
+                                數量：
+                              </span>
+                              <div className="flex items-center border border-blue-300 rounded-lg bg-white shadow-2xs">
+                                <button
+                                  type="button"
+                                  disabled={parsedPendingQty <= 1}
+                                  onClick={() =>
+                                    setPendingAddQty(
+                                      String(
+                                        clampQuantity(parsedPendingQty - 1)
+                                      )
+                                    )
+                                  }
+                                  className="p-1.5 text-slate-600 hover:text-blue-600 disabled:opacity-30 cursor-pointer"
+                                >
+                                  <Minus className="w-3.5 h-3.5" />
+                                </button>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={999}
+                                  step={1}
+                                  autoFocus
+                                  value={pendingAddQty}
+                                  onFocus={(e) => e.target.select()}
+                                  onChange={(e) => {
+                                    const raw = e.target.value.replace(
+                                      /[^0-9]/g,
+                                      ''
+                                    );
+                                    if (raw === '') {
+                                      setPendingAddQty('');
+                                      return;
+                                    }
+                                    const num = Math.min(
+                                      999,
+                                      Math.max(1, parseInt(raw, 10))
+                                    );
+                                    setPendingAddQty(String(num));
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      handleAddFromCatalog(
+                                        prod,
+                                        parsedPendingQty
+                                      );
+                                    }
+                                  }}
+                                  className="w-16 text-center text-sm font-bold text-slate-800 border-x border-blue-200 py-1 focus:outline-none font-mono"
+                                />
+                                <button
+                                  type="button"
+                                  disabled={parsedPendingQty >= 999}
+                                  onClick={() =>
+                                    setPendingAddQty(
+                                      String(
+                                        clampQuantity(parsedPendingQty + 1)
+                                      )
+                                    )
+                                  }
+                                  className="p-1.5 text-slate-600 hover:text-blue-600 disabled:opacity-30 cursor-pointer"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+
+                              <span className="text-xs font-mono text-slate-500 hidden sm:inline">
+                                小計：$
+                                {Math.round(
+                                  prod.unitPrice * parsedPendingQty
+                                ).toLocaleString()}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 ml-auto">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedCatalogKey(null)}
+                                className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-200/70 transition-colors cursor-pointer"
+                              >
+                                取消
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleAddFromCatalog(prod, parsedPendingQty)
+                                }
+                                className="inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-4 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition-all cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>加入</span>
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })
@@ -740,11 +899,18 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
               {/* 視窗底部完成列 */}
               <div className="px-4 py-3 border-t border-slate-100 bg-slate-50 flex items-center justify-between">
                 <span className="text-xs text-slate-600 font-medium">
-                  目前已選入 <strong className="text-blue-600">{sortedOrderItems.length}</strong> 項明細
+                  目前已選入{' '}
+                  <strong className="text-blue-600">
+                    {sortedOrderItems.length}
+                  </strong>{' '}
+                  項明細
                 </span>
                 <button
                   type="button"
-                  onClick={() => setIsAddModalOpen(false)}
+                  onClick={() => {
+                    setSelectedCatalogKey(null);
+                    setIsAddModalOpen(false);
+                  }}
                   className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-xl cursor-pointer transition-colors"
                 >
                   完成
