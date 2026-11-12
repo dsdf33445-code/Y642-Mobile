@@ -22,14 +22,14 @@ export const MO_SYSTEM_URL: string =
 export const CONTRACT_DATABASES: ContractConfig[] = [
   {
     id: 'contract-1',
-    name: '合約一 (products_01.csv)',
+    name: '協茂',
     contractCode: 'C01',
     githubExcelUrl: '/products_01.csv',
     fallbackLocalUrl: '/products_01.csv',
   },
   {
     id: 'contract-2',
-    name: '合約二 (products_02.csv)',
+    name: '總部大樓低壓設備電氣維修保養',
     contractCode: 'C02',
     githubExcelUrl: '/products_02.csv',
     fallbackLocalUrl: '/products_02.csv',
