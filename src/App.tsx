@@ -2,33 +2,48 @@
 // ============================================================================
 // Mobile-MO 行動工令管理系統主程式
 // 修改重點：
-// 1. 100% 綁定 Firebase Google 登入帳號 (firebaseUser.uid / email)，自動找回改版前資料庫
-// 2. 移除工令狀態切換等已刪除顯示之屬性，保持架構精簡高效
+// 1. 點擊右上角登入人員膠囊按鈕，下拉顯示「登出」按鈕，點擊後立即登出並回到登入畫面
+// 2. 串接 artifacts/mobile-mo/users/{uid} 雙層集合架構，完整還原 Google 帳號歷史工令與明細
 // ============================================================================
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { FC } from 'react';
-import { onAuthStateChanged, signInWithPopup } from 'firebase/auth';
-import { Wrench, UserCheck, LogIn } from 'lucide-react';
+import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+import {
+  Wrench,
+  UserCheck,
+  LogIn,
+  LogOut,
+  ChevronDown,
+} from 'lucide-react';
 import type { ActiveTab, UserProfile, WorkOrder } from './types';
-import { CONTRACT_DATABASES, mergeMoLineItems } from './constants';
+import {
+  CONTRACT_DATABASES,
+  STORAGE_KEYS,
+  mergeMoLineItems,
+} from './constants';
 import {
   auth,
   provider,
   subscribeUserWorkOrders,
   saveUserWorkOrder,
   deleteUserWorkOrder,
+  updateUserLoginProfile,
 } from './firebase';
 import { WorkOrderListView } from './components/WorkOrderListView';
 import { MoDetailView } from './components/MoDetailView';
 import { BottomNavigation } from './components/BottomNavigation';
 
 export const App: FC = () => {
-  // 1. Google 登入使用者狀態（直接由 Firebase Auth onAuthStateChanged 驅動）
+  // 1. Google 登入使用者狀態
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [currentUserEmail, setCurrentUserEmail] = useState<string>('');
   const [authInitializing, setAuthInitializing] = useState<boolean>(true);
   const [loginError, setLoginError] = useState<string | null>(null);
+
+  // 右上角登入人員下拉選單開關狀態与點擊外部偵測 Ref
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState<boolean>(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   // 2. 導覽分頁狀態（'list' 工令管理 與 'detail' 工令明細）
   const [activeTab, setActiveTab] = useState<ActiveTab>('list');
@@ -37,21 +52,46 @@ export const App: FC = () => {
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
-  // 監聽 Firebase Google 登入狀態（確保 uid 與改版前 Google 帳號 100% 一致）
+  // 點擊下拉選單外部時自動收起選單
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        userMenuRef.current &&
+        !userMenuRef.current.contains(event.target as Node)
+      ) {
+        setIsUserMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // 監聽 Firebase Google 登入狀態
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
       if (firebaseUser) {
-        setCurrentUser({
+        const profile: UserProfile = {
           uid: firebaseUser.uid,
           displayName:
             firebaseUser.displayName ||
             firebaseUser.email?.split('@')[0] ||
             'Google 使用者',
-        });
+        };
+        setCurrentUser(profile);
         setCurrentUserEmail(firebaseUser.email || '');
+        localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(profile));
+
+        // 同步更新 artifacts/mobile-mo/users/{uid} 的登入時間紀錄
+        void updateUserLoginProfile({
+          uid: firebaseUser.uid,
+          displayName: firebaseUser.displayName,
+          email: firebaseUser.email,
+          photoURL: firebaseUser.photoURL,
+        });
       } else {
         setCurrentUser(null);
         setCurrentUserEmail('');
+        localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
       }
       setAuthInitializing(false);
     });
@@ -59,7 +99,7 @@ export const App: FC = () => {
     return () => unsubscribeAuth();
   }, []);
 
-  // 訂閱該 Google 登入者專屬的工令清單（含自動掃描改版前歷史資料庫）
+  // 訂閱該 Google 登入者專屬的工令與明細（對應 artifacts/mobile-mo/users/{uid}）
   useEffect(() => {
     if (!currentUser) {
       setWorkOrders([]);
@@ -77,12 +117,11 @@ export const App: FC = () => {
           }
           return orders[0]?.id || null;
         });
-      },
-      currentUserEmail
+      }
     );
 
     return () => unsubscribeOrders();
-  }, [currentUser, currentUserEmail]);
+  }, [currentUser]);
 
   // 目前選取中的工令物件
   const selectedWorkOrder = useMemo(
@@ -90,14 +129,31 @@ export const App: FC = () => {
     [workOrders, selectedOrderId]
   );
 
-  // 使用 Google 帳號登入
+  // 使用 Google 帳號登入（每次點擊皆顯示帳號選擇器，方便切換帳號）
   const handleGoogleLogin = async () => {
     setLoginError(null);
     try {
+      provider.setCustomParameters({ prompt: 'select_account' });
       await signInWithPopup(auth, provider);
     } catch (error) {
       console.error('Google 登入失敗：', error);
       setLoginError('Google 登入未完成，請確認網路連線或彈出視窗權限後重試。');
+    }
+  };
+
+  // 點擊右上角下拉選單的「登出」按鈕，登出並回到登入畫面
+  const handleLogout = async () => {
+    setIsUserMenuOpen(false);
+    try {
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      await signOut(auth);
+      setCurrentUser(null);
+      setCurrentUserEmail('');
+      setWorkOrders([]);
+      setSelectedOrderId(null);
+      setActiveTab('list');
+    } catch (error) {
+      console.error('登出時發生錯誤：', error);
     }
   };
 
@@ -233,7 +289,7 @@ export const App: FC = () => {
     );
   }
 
-  // 尚未登入時顯示 Google 帳號登入畫面
+  // 尚未登入（或點擊登出後）顯示 Google 帳號登入畫面
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
@@ -289,9 +345,46 @@ export const App: FC = () => {
             </div>
           </div>
 
-          <div className="inline-flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-full text-xs font-medium text-slate-700 border border-slate-200">
-            <UserCheck className="w-3.5 h-3.5 text-blue-600" />
-            <span>{currentUser.displayName}</span>
+          {/* 右上角登入人員按鈕與下拉登出選單 */}
+          <div className="relative" ref={userMenuRef}>
+            <button
+              type="button"
+              onClick={() => setIsUserMenuOpen((prev) => !prev)}
+              className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200/80 px-3 py-1.5 rounded-full text-xs font-medium text-slate-700 border border-slate-200 transition-colors cursor-pointer"
+            >
+              <UserCheck className="w-3.5 h-3.5 text-blue-600" />
+              <span>{currentUser.displayName}</span>
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${
+                  isUserMenuOpen ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+
+            {/* 點擊後展開的下拉選單 */}
+            {isUserMenuOpen && (
+              <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-1.5 z-50">
+                {currentUserEmail && (
+                  <div className="px-3.5 py-2 border-b border-slate-100">
+                    <div className="text-xs font-bold text-slate-800 truncate">
+                      {currentUser.displayName}
+                    </div>
+                    <div className="text-[11px] text-slate-400 truncate">
+                      {currentUserEmail}
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="w-full px-3.5 py-2 text-left text-xs font-semibold text-red-600 hover:bg-red-50 flex items-center gap-2 transition-colors cursor-pointer"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>登出</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>
