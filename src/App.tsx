@@ -2,20 +2,16 @@
 // ============================================================================
 // Mobile-MO 行動工令管理系統主程式
 // 修改重點：
-// 1. 新增 handleEditOrder 支援工令管理列表的「編輯」功能
-// 2. 建立新工令移除施工區域 (location) 欄位
+// 1. 100% 綁定 Firebase Google 登入帳號 (firebaseUser.uid / email)，自動找回改版前資料庫
+// 2. 移除工令狀態切換等已刪除顯示之屬性，保持架構精簡高效
 // ============================================================================
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import type { FC, FormEvent } from 'react';
+import type { FC } from 'react';
 import { onAuthStateChanged, signInWithPopup } from 'firebase/auth';
 import { Wrench, UserCheck, LogIn } from 'lucide-react';
 import type { ActiveTab, UserProfile, WorkOrder } from './types';
-import {
-  CONTRACT_DATABASES,
-  STORAGE_KEYS,
-  mergeMoLineItems,
-} from './constants';
+import { CONTRACT_DATABASES, mergeMoLineItems } from './constants';
 import {
   auth,
   provider,
@@ -28,42 +24,34 @@ import { MoDetailView } from './components/MoDetailView';
 import { BottomNavigation } from './components/BottomNavigation';
 
 export const App: FC = () => {
-  // 1. 登入者狀態
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
-      return saved ? (JSON.parse(saved) as UserProfile) : null;
-    } catch {
-      return null;
-    }
-  });
+  // 1. Google 登入使用者狀態（直接由 Firebase Auth onAuthStateChanged 驅動）
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string>('');
   const [authInitializing, setAuthInitializing] = useState<boolean>(true);
   const [loginError, setLoginError] = useState<string | null>(null);
-
-  // 工號/帳號快速登入表單狀態
-  const [loginUid, setLoginUid] = useState('');
-  const [loginName, setLoginName] = useState('');
 
   // 2. 導覽分頁狀態（'list' 工令管理 與 'detail' 工令明細）
   const [activeTab, setActiveTab] = useState<ActiveTab>('list');
 
-  // 3. 目前登入者專屬的工令清單與選取中的工令 ID
+  // 3. 目前 Google 帳號專屬的工令清單與選取中的工令 ID
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
-  // 監聽 Firebase Google 登入狀態
+  // 監聽 Firebase Google 登入狀態（確保 uid 與改版前 Google 帳號 100% 一致）
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
       if (firebaseUser) {
-        const profile: UserProfile = {
+        setCurrentUser({
           uid: firebaseUser.uid,
           displayName:
             firebaseUser.displayName ||
             firebaseUser.email?.split('@')[0] ||
-            '使用者',
-        };
-        localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(profile));
-        setCurrentUser(profile);
+            'Google 使用者',
+        });
+        setCurrentUserEmail(firebaseUser.email || '');
+      } else {
+        setCurrentUser(null);
+        setCurrentUserEmail('');
       }
       setAuthInitializing(false);
     });
@@ -71,7 +59,7 @@ export const App: FC = () => {
     return () => unsubscribeAuth();
   }, []);
 
-  // 訂閱該登入者專屬的工令清單（依 ownerId 隔離資料）
+  // 訂閱該 Google 登入者專屬的工令清單（含自動掃描改版前歷史資料庫）
   useEffect(() => {
     if (!currentUser) {
       setWorkOrders([]);
@@ -89,11 +77,12 @@ export const App: FC = () => {
           }
           return orders[0]?.id || null;
         });
-      }
+      },
+      currentUserEmail
     );
 
     return () => unsubscribeOrders();
-  }, [currentUser]);
+  }, [currentUser, currentUserEmail]);
 
   // 目前選取中的工令物件
   const selectedWorkOrder = useMemo(
@@ -105,35 +94,14 @@ export const App: FC = () => {
   const handleGoogleLogin = async () => {
     setLoginError(null);
     try {
-      const result = await signInWithPopup(auth, provider);
-      const user = result.user;
-      const profile: UserProfile = {
-        uid: user.uid,
-        displayName: user.displayName || user.email?.split('@')[0] || '使用者',
-      };
-      localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(profile));
-      setCurrentUser(profile);
+      await signInWithPopup(auth, provider);
     } catch (error) {
       console.error('Google 登入失敗：', error);
-      setLoginError('Google 登入未完成，請重試或使用下方員工編號直接進入。');
+      setLoginError('Google 登入未完成，請確認網路連線或彈出視窗權限後重試。');
     }
   };
 
-  // 使用員工編號/專屬帳號登入
-  const handleManualLoginSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    const cleanUid = loginUid.trim().toUpperCase();
-    if (!cleanUid) return;
-
-    const profile: UserProfile = {
-      uid: cleanUid,
-      displayName: loginName.trim() || cleanUid,
-    };
-    localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(profile));
-    setCurrentUser(profile);
-  };
-
-  // 建立新工令（已移除 location 欄位）
+  // 建立新工令
   const handleCreateOrder = useCallback(
     async (data: {
       woNumber: string;
@@ -163,7 +131,7 @@ export const App: FC = () => {
     [currentUser]
   );
 
-  // 編輯既有工令（修改工令編號、工令名稱、選擇合約）
+  // 編輯既有工令
   const handleEditOrder = useCallback(
     async (data: {
       id: string;
@@ -240,19 +208,6 @@ export const App: FC = () => {
     [currentUser]
   );
 
-  // 切換工令狀態（進行中 <-> 已完成）
-  const handleToggleStatus = useCallback(
-    async (order: WorkOrder) => {
-      if (!currentUser) return;
-      const nextStatus = order.status === '已完成' ? '進行中' : '已完成';
-      await saveUserWorkOrder(currentUser.uid, {
-        ...order,
-        status: nextStatus,
-      });
-    },
-    [currentUser]
-  );
-
   // 刪除工令
   const handleDeleteOrder = useCallback(
     async (orderId: string) => {
@@ -268,90 +223,48 @@ export const App: FC = () => {
     setActiveTab('detail');
   }, []);
 
-  if (authInitializing && !currentUser) {
+  if (authInitializing) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-        <div className="text-sm font-medium text-slate-500">系統載入中...</div>
+        <div className="text-sm font-medium text-slate-500">
+          正在同步 Google 帳號與雲端工令資料庫...
+        </div>
       </div>
     );
   }
 
+  // 尚未登入時顯示 Google 帳號登入畫面
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-md border border-slate-200 space-y-5">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-xs">
-              <Wrench className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-lg font-extrabold text-slate-800">
-                工令管理系統 (Mobile-MO)
-              </h1>
-              <p className="text-xs text-slate-500">
-                個人帳號資料隔離・多合約雲端單價表
-              </p>
-            </div>
+        <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-md border border-slate-200 space-y-5 text-center">
+          <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center text-white shadow-xs mx-auto">
+            <Wrench className="w-6 h-6" />
+          </div>
+
+          <div className="space-y-1">
+            <h1 className="text-lg font-extrabold text-slate-800">
+              工令管理系統 (Mobile-MO)
+            </h1>
+            <p className="text-xs text-slate-500">
+              請使用您的 Google 帳號登入以載入個人工令資料庫
+            </p>
           </div>
 
           <button
             type="button"
             onClick={handleGoogleLogin}
-            className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 text-slate-700 font-semibold rounded-xl text-sm border border-slate-300 shadow-2xs flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-sm shadow-xs flex items-center justify-center gap-2 transition-colors cursor-pointer"
           >
-            <LogIn className="w-4 h-4 text-blue-600" />
+            <LogIn className="w-4 h-4" />
             <span>使用 Google 帳號登入</span>
           </button>
 
           {loginError && (
-            <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+            <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-left">
               {loginError}
             </div>
           )}
-
-          <div className="relative flex py-1 items-center">
-            <div className="grow border-t border-slate-200"></div>
-            <span className="shrink mx-3 text-[11px] text-slate-400">
-              或使用員工編號登入
-            </span>
-            <div className="grow border-t border-slate-200"></div>
-          </div>
-
-          <form onSubmit={handleManualLoginSubmit} className="space-y-3.5">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                員工編號 / 專屬帳號 <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                value={loginUid}
-                onChange={(e) => setLoginUid(e.target.value)}
-                placeholder="請輸入您的員工編號或帳號"
-                className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                顯示姓名（選填）
-              </label>
-              <input
-                type="text"
-                value={loginName}
-                onChange={(e) => setLoginName(e.target.value)}
-                placeholder="例如：工程師姓名"
-                className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <button
-              type="submit"
-              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-sm shadow-xs transition-colors cursor-pointer"
-            >
-              進入個人工令工作區
-            </button>
-          </form>
         </div>
       </div>
     );
@@ -395,7 +308,6 @@ export const App: FC = () => {
             onEditOrder={handleEditOrder}
             onMergeOrders={handleMergeOrders}
             onDeleteOrder={handleDeleteOrder}
-            onToggleStatus={handleToggleStatus}
           />
         ) : (
           <MoDetailView
