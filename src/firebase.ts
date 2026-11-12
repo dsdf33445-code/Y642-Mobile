@@ -1,11 +1,11 @@
 // src/firebase.ts
 // ============================================================================
-// Firebase 核心設定與 Firestore 雙層集合 (artifacts/mobile-mo/users/{uid}) 同步模組
-// 1. 精準對應原始資料庫路徑：
-//    - 使用者文件：artifacts/mobile-mo/users/{uid}
-//    - 工令子集合：artifacts/mobile-mo/users/{uid}/workOrders
-//    - 明細子集合：artifacts/mobile-mo/users/{uid}/items (含 id, name, no, price, qty, workOrderId)
-// 2. 同時相容根目錄 workOrders 集合，自動依 workOrderId 關聯組裝並依項目編號排序
+// Firebase 核心設定與統一資料庫路徑模組
+// 統一後唯一路徑架構：
+// 1. 使用者主檔：artifacts/mobile-mo/users/{uid}
+// 2. 工令主檔：  artifacts/mobile-mo/users/{uid}/workOrders/{workOrderId}
+// 3. 工令明細：  artifacts/mobile-mo/users/{uid}/items/{itemId}
+// 4. 自動遷移清理：登入時自動將根目錄殘留的 workOrders 搬移回上述統一路徑並刪除根目錄舊文件
 // ============================================================================
 
 import { initializeApp } from 'firebase/app';
@@ -14,10 +14,10 @@ import {
   getFirestore,
   collection,
   doc,
+  getDoc,
   getDocs,
   onSnapshot,
   setDoc,
-  deleteDoc,
   writeBatch,
   query,
   where,
@@ -43,11 +43,12 @@ export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const provider = new GoogleAuthProvider();
 
-// 原始資料庫固定 App 路徑名稱 (對應 artifacts/mobile-mo/users/{uid})
+// 統一資料庫路徑常數 (artifacts/mobile-mo/users/{uid})
 const ARTIFACTS_COLLECTION = 'artifacts';
 const APP_ARTIFACT_ID = 'mobile-mo';
 const USERS_COLLECTION = 'users';
 const WORK_ORDERS_SUBCOLLECTION = 'workOrders';
+const AGREEMENTS_SUBCOLLECTION = 'agreements';
 const ITEMS_SUBCOLLECTION = 'items';
 
 /**
@@ -90,7 +91,9 @@ const toSafeIsoString = (val: unknown): string => {
   if (!val) return new Date().toISOString();
   if (typeof val === 'string') {
     const parsed = Date.parse(val);
-    return Number.isNaN(parsed) ? new Date().toISOString() : new Date(parsed).toISOString();
+    return Number.isNaN(parsed)
+      ? new Date().toISOString()
+      : new Date(parsed).toISOString();
   }
   if (typeof val === 'number') {
     return new Date(val).toISOString();
@@ -108,6 +111,184 @@ const toSafeIsoString = (val: unknown): string => {
 };
 
 /**
+ * 判斷字串是否為系統自動產生的暫代編號
+ */
+const isPlaceholderWoNumber = (val: string, docId: string): boolean => {
+  const clean = val.trim();
+  if (!clean || clean === '未編號') return true;
+  const upperId = docId.trim().toUpperCase();
+  if (upperId.length >= 8) {
+    if (
+      clean.toUpperCase() === upperId.slice(0, 8) ||
+      clean.toUpperCase() === upperId.slice(0, 10) ||
+      clean === docId.trim()
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
+/**
+ * 判斷字串是否為系統自動產生的暫代工令名稱
+ */
+const isPlaceholderWoTitle = (val: string): boolean => {
+  const clean = val.trim();
+  if (!clean || clean === '未命名工令') return true;
+  if (clean.startsWith('還原工令')) return true;
+  return false;
+};
+
+/**
+ * 從多個候選欄位名稱中，依序挑出第一個「非空白且非暫代值」的真實字串
+ */
+const pickFirstValidField = (
+  raw: Record<string, unknown>,
+  candidateKeys: string[],
+  isPlaceholderFn?: (val: string) => boolean
+): string => {
+  for (const key of candidateKeys) {
+    const val = raw[key];
+    if (val !== undefined && val !== null) {
+      const str = String(val).trim();
+      if (str !== '' && (!isPlaceholderFn || !isPlaceholderFn(str))) {
+        return str;
+      }
+    }
+  }
+  for (const key of candidateKeys) {
+    const val = raw[key];
+    if (val !== undefined && val !== null) {
+      const str = String(val).trim();
+      if (str !== '') {
+        return str;
+      }
+    }
+  }
+  return '';
+};
+
+/**
+ * 智慧提取工令的「原始工令編號」
+ */
+const extractOriginalWoNumber = (
+  raw: Record<string, unknown>,
+  docId: string
+): string => {
+  const numberKeys = [
+    'no',
+    'orderNo',
+    'workOrderNo',
+    'workOrderNumber',
+    'woNo',
+    'woNumber',
+    'orderNumber',
+    'moNo',
+    'moNumber',
+    'agreementNo',
+    'contractNo',
+    'code',
+    'number',
+    'serialNo',
+    'sn',
+    '工令編號',
+    '編號',
+  ];
+
+  const found = pickFirstValidField(raw, numberKeys, (val) =>
+    isPlaceholderWoNumber(val, docId)
+  );
+  if (found && !isPlaceholderWoNumber(found, docId)) {
+    return found;
+  }
+
+  const excludedKeys = new Set([
+    'id',
+    'uid',
+    'userid',
+    'ownerid',
+    'contractid',
+    'workorderid',
+    'photourl',
+  ]);
+  for (const [k, v] of Object.entries(raw)) {
+    const lowerK = k.toLowerCase();
+    if (excludedKeys.has(lowerK)) continue;
+    if (
+      (lowerK.includes('no') ||
+        lowerK.includes('num') ||
+        lowerK.includes('code') ||
+        lowerK.includes('編號')) &&
+      (typeof v === 'string' || typeof v === 'number')
+    ) {
+      const str = String(v).trim();
+      if (str !== '' && !isPlaceholderWoNumber(str, docId)) {
+        return str;
+      }
+    }
+  }
+
+  return found;
+};
+
+/**
+ * 智慧提取工令的「原始工令名稱」
+ */
+const extractOriginalWoTitle = (raw: Record<string, unknown>): string => {
+  const titleKeys = [
+    'name',
+    'orderName',
+    'workOrderName',
+    'woName',
+    'moName',
+    'projectName',
+    'project',
+    'agreementName',
+    'subject',
+    'title',
+    'description',
+    'desc',
+    'note',
+    '工令名稱',
+    '工程名稱',
+    '案名',
+    '名稱',
+  ];
+
+  const found = pickFirstValidField(raw, titleKeys, isPlaceholderWoTitle);
+  if (found && !isPlaceholderWoTitle(found)) {
+    return found;
+  }
+
+  const excludedKeys = new Set([
+    'ownername',
+    'username',
+    'displayname',
+    'contractname',
+  ]);
+  for (const [k, v] of Object.entries(raw)) {
+    const lowerK = k.toLowerCase();
+    if (excludedKeys.has(lowerK)) continue;
+    if (
+      (lowerK.includes('name') ||
+        lowerK.includes('title') ||
+        lowerK.includes('project') ||
+        lowerK.includes('名稱') ||
+        lowerK.includes('案名') ||
+        lowerK.includes('工程')) &&
+      typeof v === 'string'
+    ) {
+      const str = v.trim();
+      if (str !== '' && !isPlaceholderWoTitle(str)) {
+        return str;
+      }
+    }
+  }
+
+  return found;
+};
+
+/**
  * 將 MO 明細項目陣列依照「項目編號 (code)」由小到大自然排序
  */
 export const sortMoItemsByCode = (items: MoLineItem[]): MoLineItem[] => {
@@ -120,52 +301,51 @@ export const sortMoItemsByCode = (items: MoLineItem[]): MoLineItem[] => {
 };
 
 /**
- * 正規化單筆 MO 明細（完整對應舊版 items 集合的 no, name, price, qty, workOrderId 欄位）
+ * 正規化單筆 MO 明細（對應 items 子集合的 id, no, name, price, qty, workOrderId 欄位）
  */
 const normalizeLegacyMoItem = (
   raw: Record<string, unknown>,
   fallbackId: string
 ): MoLineItem => {
-  // 對應舊版欄位 no (如 "Y6N1OZ4903AO") 或新版 code
-  const code = String(
-    raw.code ??
-      raw.no ??
-      raw.itemCode ??
-      raw.productId ??
-      raw.productCode ??
-      raw.itemNo ??
-      raw['項目編號'] ??
-      raw['料號'] ??
-      'ITEM'
-  ).trim();
+  const code =
+    pickFirstValidField(raw, [
+      'no',
+      'code',
+      'itemCode',
+      'productId',
+      'productCode',
+      'itemNo',
+      '項目編號',
+      '料號',
+    ]) || 'ITEM';
 
-  // 對應舊版欄位 name (如 "監火、警戒、急救人員(含扶梯人員)")
-  const name = String(
-    raw.name ??
-      raw.itemName ??
-      raw.productName ??
-      raw.title ??
-      raw.description ??
-      raw['項目名稱'] ??
-      raw['工項名稱'] ??
-      ''
-  ).trim();
+  const name = pickFirstValidField(raw, [
+    'name',
+    'itemName',
+    'productName',
+    'title',
+    'description',
+    '項目名稱',
+    '工項名稱',
+    '品名',
+  ]);
 
-  const spec = String(
-    raw.spec ?? raw.specification ?? raw.model ?? raw['規格'] ?? ''
-  ).trim();
+  const spec = pickFirstValidField(raw, [
+    'spec',
+    'specification',
+    'model',
+    '規格',
+  ]);
 
-  const unit = String(raw.unit ?? raw.uom ?? raw['單位'] ?? '式').trim();
+  const unit = pickFirstValidField(raw, ['unit', 'uom', '單位']) || '式';
 
-  // 對應舊版欄位 price (如 262) 或新版 unitPrice
   const rawPrice = Number(
-    raw.unitPrice ?? raw.price ?? raw.cost ?? raw['單價'] ?? 0
+    raw.price ?? raw.unitPrice ?? raw.cost ?? raw['單價'] ?? 0
   );
   const unitPrice = Number.isFinite(rawPrice) && rawPrice >= 0 ? rawPrice : 0;
 
-  // 對應舊版欄位 qty (如 8) 或新版 quantity，並限制範圍 1 ~ 999
   const rawQty = Number(
-    raw.quantity ?? raw.qty ?? raw.count ?? raw['數量'] ?? 1
+    raw.qty ?? raw.quantity ?? raw.count ?? raw['數量'] ?? 1
   );
   const quantity = Number.isFinite(rawQty)
     ? Math.min(999, Math.max(1, Math.round(rawQty)))
@@ -174,7 +354,7 @@ const normalizeLegacyMoItem = (
   const subtotal = Math.round(unitPrice * quantity);
 
   return {
-    id: String(raw.id ?? fallbackId),
+    id: String(raw.id || fallbackId),
     code,
     name: name || `工項 ${code}`,
     spec,
@@ -187,57 +367,52 @@ const normalizeLegacyMoItem = (
 };
 
 /**
- * 正規化單筆工令主檔資料（同時支援內嵌 items 與外部 items 子集合組裝）
+ * 正規化單筆工令主檔資料（支援合併 workOrders、agreements 與 items 子集合）
  */
 export const normalizeLegacyWorkOrder = (
   raw: Record<string, unknown>,
   docId: string,
   currentUid: string,
-  externalItems?: MoLineItem[]
+  externalItems?: MoLineItem[],
+  supplementalMeta?: Record<string, unknown>
 ): WorkOrder | null => {
   if (!raw || typeof raw !== 'object') return null;
 
-  // 擷取工令編號（相容舊版 no, orderNo, woNumber, code 等欄位）
-  const rawWoNumber = String(
-    raw.woNumber ??
-      raw.no ??
-      raw.orderNo ??
-      raw.workOrderNo ??
-      raw.workOrderNumber ??
-      raw.orderNumber ??
-      raw.moNumber ??
-      raw.moNo ??
-      raw.number ??
-      raw.code ??
-      raw['工令編號'] ??
-      ''
-  ).trim();
+  const combinedRaw: Record<string, unknown> = supplementalMeta
+    ? { ...supplementalMeta, ...raw }
+    : raw;
 
-  // 擷取工令名稱（相容舊版 name, title, workOrderName, orderName 等欄位）
-  const rawTitle = String(
-    raw.title ??
-      raw.name ??
-      raw.workOrderName ??
-      raw.orderName ??
-      raw.projectName ??
-      raw.description ??
-      raw['工令名稱'] ??
-      raw['案名'] ??
-      ''
-  ).trim();
+  let rawWoNumber = extractOriginalWoNumber(raw, docId);
+  if (
+    (!rawWoNumber || isPlaceholderWoNumber(rawWoNumber, docId)) &&
+    supplementalMeta
+  ) {
+    const metaNo = extractOriginalWoNumber(supplementalMeta, docId);
+    if (metaNo) rawWoNumber = metaNo;
+  }
 
-  if (!rawWoNumber && !rawTitle && (!externalItems || externalItems.length === 0)) {
+  let rawTitle = extractOriginalWoTitle(raw);
+  if ((!rawTitle || isPlaceholderWoTitle(rawTitle)) && supplementalMeta) {
+    const metaTitle = extractOriginalWoTitle(supplementalMeta);
+    if (metaTitle) rawTitle = metaTitle;
+  }
+
+  if (
+    !rawWoNumber &&
+    !rawTitle &&
+    (!externalItems || externalItems.length === 0)
+  ) {
     return null;
   }
 
-  const woNumber = rawWoNumber || rawTitle || docId.slice(0, 8).toUpperCase();
+  const woNumber =
+    rawWoNumber || rawTitle || docId.slice(0, 8).toUpperCase();
   const title = rawTitle || rawWoNumber || '未命名工令';
 
-  // 擷取內嵌明細陣列（若有）
   const embeddedRawArray =
-    (Array.isArray(raw.items) && raw.items) ||
-    (Array.isArray(raw.moItems) && raw.moItems) ||
-    (Array.isArray(raw.details) && raw.details) ||
+    (Array.isArray(combinedRaw.items) && combinedRaw.items) ||
+    (Array.isArray(combinedRaw.moItems) && combinedRaw.moItems) ||
+    (Array.isArray(combinedRaw.details) && combinedRaw.details) ||
     [];
 
   const embeddedItems = embeddedRawArray.map((item, idx) =>
@@ -247,17 +422,10 @@ export const normalizeLegacyWorkOrder = (
     )
   );
 
-  // 合併內嵌明細與來自 artifacts/mobile-mo/users/{uid}/items 子集合的明細
+  // 以 items 子集合 (externalItems) 為準，若子集合尚未同步該筆但主檔有內嵌明細則自動帶入
   let finalItems: MoLineItem[] = [];
-  if (raw.itemsMigrated === true) {
-    // 已由新版寫入完整明細陣列
-    finalItems = embeddedItems;
-  } else if (externalItems && externalItems.length > 0) {
-    // 優先使用舊版 items 子集合透過 workOrderId 關聯的明細資料
-    const itemMap = new Map<string, MoLineItem>();
-    embeddedItems.forEach((it) => itemMap.set(`${it.code}__${it.name}`, it));
-    externalItems.forEach((it) => itemMap.set(it.id, it));
-    finalItems = Array.from(itemMap.values());
+  if (externalItems && externalItems.length > 0) {
+    finalItems = externalItems;
   } else {
     finalItems = embeddedItems;
   }
@@ -269,31 +437,39 @@ export const normalizeLegacyWorkOrder = (
   );
 
   const createdAt = toSafeIsoString(
-    raw.createdAt ?? raw.createTime ?? raw.date ?? raw.timestamp
+    combinedRaw.createdAt ??
+      combinedRaw.createTime ??
+      combinedRaw.date ??
+      combinedRaw.timestamp
   );
   const updatedAt = toSafeIsoString(
-    raw.updatedAt ??
-      raw.updateTime ??
-      raw.lastModified ??
-      raw.createdAt ??
-      raw.timestamp ??
+    combinedRaw.updatedAt ??
+      combinedRaw.updateTime ??
+      combinedRaw.lastModified ??
+      combinedRaw.createdAt ??
+      combinedRaw.timestamp ??
       createdAt
   );
 
   return {
-    id: String(raw.id ?? docId),
+    id: String(combinedRaw.id || docId),
     woNumber,
     title,
     ownerId: currentUid,
-    ownerName: String(raw.ownerName ?? raw.userName ?? raw.displayName ?? '').trim(),
-    contractId: String(
-      raw.contractId ??
-        raw.contract ??
-        raw.databaseId ??
-        CONTRACT_DATABASES[0]?.id ??
-        'contract-1'
-    ),
-    status: raw.status === '已完成' ? '已完成' : '進行中',
+    ownerName: pickFirstValidField(combinedRaw, [
+      'ownerName',
+      'userName',
+      'displayName',
+    ]),
+    contractId:
+      pickFirstValidField(combinedRaw, [
+        'contractId',
+        'contract',
+        'databaseId',
+      ]) ||
+      CONTRACT_DATABASES[0]?.id ||
+      'contract-1',
+    status: combinedRaw.status === '已完成' ? '已完成' : '進行中',
     items: sortedItems,
     totalAmount: calculatedTotal,
     createdAt,
@@ -305,7 +481,7 @@ export const normalizeLegacyWorkOrder = (
  * 產生特定登入者專屬的 LocalStorage 快取鍵值
  */
 const getLocalKeyForUser = (ownerId: string): string =>
-  `${STORAGE_KEYS.WORK_ORDERS_PREFIX}${ownerId.trim()}`;
+  `${STORAGE_KEYS.WORK_ORDERS_PREFIX}unified_${ownerId.trim()}`;
 
 /**
  * 從本地儲存讀取該登入者個人建立的工令清單
@@ -344,53 +520,181 @@ export const saveLocalWorkOrders = (
 };
 
 /**
+ * 自動遷移並清除根目錄的 workOrders 集合
+ * 將改版測試期間寫入根目錄 workOrders 的工令與明細，完整搬移至統一的
+ * artifacts/mobile-mo/users/{uid}/workOrders 與 items，並刪除根目錄的舊文件
+ */
+const migrateAndCleanRootWorkOrders = async (ownerId: string): Promise<void> => {
+  try {
+    const rootColRef = collection(db, WORK_ORDERS_SUBCOLLECTION);
+    const rootSnap = await getDocs(
+      query(rootColRef, where('ownerId', '==', ownerId))
+    );
+
+    if (rootSnap.empty) return;
+
+    const batch = writeBatch(db);
+    const userWorkOrdersColRef = collection(
+      db,
+      ARTIFACTS_COLLECTION,
+      APP_ARTIFACT_ID,
+      USERS_COLLECTION,
+      ownerId,
+      WORK_ORDERS_SUBCOLLECTION
+    );
+    const userItemsColRef = collection(
+      db,
+      ARTIFACTS_COLLECTION,
+      APP_ARTIFACT_ID,
+      USERS_COLLECTION,
+      ownerId,
+      ITEMS_SUBCOLLECTION
+    );
+
+    rootSnap.forEach((rootDocSnap) => {
+      const raw = rootDocSnap.data() as Record<string, unknown>;
+      const wo = normalizeLegacyWorkOrder(raw, rootDocSnap.id, ownerId);
+
+      if (wo) {
+        // 1. 寫入統一的 artifacts/mobile-mo/users/{uid}/workOrders/{wo.id}
+        const targetWoRef = doc(userWorkOrdersColRef, wo.id);
+        batch.set(
+          targetWoRef,
+          {
+            id: wo.id,
+            no: wo.woNumber,
+            woNumber: wo.woNumber,
+            name: wo.title,
+            title: wo.title,
+            contractId: wo.contractId,
+            totalAmount: wo.totalAmount,
+            ownerId,
+            ownerName: wo.ownerName,
+            status: wo.status,
+            createdAt: wo.createdAt,
+            updatedAt: wo.updatedAt,
+          },
+          { merge: true }
+        );
+
+        // 2. 將內嵌的 items 寫入統一的 artifacts/mobile-mo/users/{uid}/items/{item.id}
+        wo.items.forEach((item) => {
+          const targetItemRef = doc(userItemsColRef, item.id);
+          batch.set(
+            targetItemRef,
+            {
+              id: item.id,
+              no: item.code,
+              name: item.name,
+              spec: item.spec || '',
+              price: item.unitPrice,
+              qty: item.quantity,
+              workOrderId: wo.id,
+              workOrderNo: wo.woNumber,
+              workOrderName: wo.title,
+            },
+            { merge: true }
+          );
+        });
+      }
+
+      // 3. 刪除根目錄 workOrders 中的文件（清空後根目錄 workOrders 集合即自動消失）
+      batch.delete(rootDocSnap.ref);
+    });
+
+    await batch.commit();
+  } catch (err) {
+    console.warn('遷移並清理根目錄 workOrders 時略過：', err);
+  }
+};
+
+/**
  * 訂閱特定 Google 登入者 (ownerId) 的所有工令與明細
- * 同時即時監聽：
- * 1. artifacts/mobile-mo/users/{uid}/workOrders (原版工令主檔集合)
- * 2. artifacts/mobile-mo/users/{uid}/items (原版工令明細集合，依 workOrderId 關聯)
- * 3. 根目錄 workOrders (相容改版過渡期建立之工令)
+ * 統一監聽唯一路徑：artifacts/mobile-mo/users/{uid}/workOrders 與 items
  */
 export const subscribeUserWorkOrders = (
   ownerId: string,
   onUpdate: (orders: WorkOrder[]) => void
 ): (() => void) => {
-  // 先載入本地快取提供 0 延遲畫面
   const cachedOrders = loadLocalWorkOrders(ownerId);
   if (cachedOrders.length > 0) {
     onUpdate(cachedOrders);
   }
 
-  // 存放各來源原始資料
+  // 啟動背景自動遷移與清除根目錄殘留的 workOrders
+  void migrateAndCleanRootWorkOrders(ownerId);
+
   const artifactRawWorkOrders = new Map<string, Record<string, unknown>>();
+  const artifactRawAgreements = new Map<string, Record<string, unknown>>();
   const artifactItemsByWoId = new Map<string, MoLineItem[]>();
-  const rootWorkOrdersMap = new Map<string, WorkOrder>();
+  const itemRawMetaByWoId = new Map<string, Record<string, unknown>>();
 
-  // 統整所有來源並組裝出最終的工令清單
+  const initialSync = {
+    workOrders: false,
+    agreements: false,
+    items: false,
+  };
+
+  const findSupplementalMeta = (
+    targetWoId: string
+  ): Record<string, unknown> | undefined => {
+    if (artifactRawWorkOrders.has(targetWoId)) {
+      return artifactRawWorkOrders.get(targetWoId);
+    }
+    if (artifactRawAgreements.has(targetWoId)) {
+      return artifactRawAgreements.get(targetWoId);
+    }
+    for (const [, agData] of artifactRawAgreements.entries()) {
+      const linkedId = String(
+        agData.workOrderId ?? agData.orderId ?? agData.moId ?? ''
+      ).trim();
+      if (linkedId === targetWoId) {
+        return agData;
+      }
+    }
+    if (itemRawMetaByWoId.has(targetWoId)) {
+      return itemRawMetaByWoId.get(targetWoId);
+    }
+    return undefined;
+  };
+
+  // 統整統一集合內的資料並通知 UI 更新
   const rebuildAndEmitOrders = () => {
+    if (
+      !initialSync.workOrders ||
+      !initialSync.agreements ||
+      !initialSync.items
+    ) {
+      return;
+    }
+
     const finalOrdersMap = new Map<string, WorkOrder>();
-
-    // 1. 先放入根目錄 workOrders 的工令
-    rootWorkOrdersMap.forEach((wo, id) => {
-      finalOrdersMap.set(id, wo);
-    });
-
-    // 2. 組裝 artifacts/mobile-mo/users/{uid}/workOrders 與對應的 items
     const handledWoIds = new Set<string>();
+
+    // 1. 組裝 artifacts/mobile-mo/users/{uid}/workOrders 與對應的 items
     artifactRawWorkOrders.forEach((rawWo, woDocId) => {
-      const targetWoId = String(rawWo.id ?? woDocId);
+      const targetWoId = String(rawWo.id || woDocId).trim();
       handledWoIds.add(targetWoId);
       handledWoIds.add(woDocId);
 
       const linkedItems = [
         ...(artifactItemsByWoId.get(targetWoId) || []),
-        ...(targetWoId !== woDocId ? artifactItemsByWoId.get(woDocId) || [] : []),
+        ...(targetWoId !== woDocId
+          ? artifactItemsByWoId.get(woDocId) || []
+          : []),
       ];
+
+      const suppMeta =
+        artifactRawAgreements.get(targetWoId) ||
+        artifactRawAgreements.get(woDocId) ||
+        itemRawMetaByWoId.get(targetWoId);
 
       const normalizedWo = normalizeLegacyWorkOrder(
         rawWo,
         targetWoId,
         ownerId,
-        linkedItems
+        linkedItems,
+        suppMeta
       );
 
       if (normalizedWo) {
@@ -398,40 +702,66 @@ export const subscribeUserWorkOrders = (
       }
     });
 
-    // 3. 防呆還原：若 artifacts/mobile-mo/users/{uid}/items 中有某個 workOrderId，
-    //    但其父工令不在 workOrders 子集合中，自動為該批明細重組建立工令卡片，確保資料 0 遺失
+    // 2. 相容讀取 agreements 子集合中尚未轉入 workOrders 的舊工令主檔
+    artifactRawAgreements.forEach((rawAg, agDocId) => {
+      const targetWoId = String(
+        rawAg.workOrderId ?? rawAg.orderId ?? rawAg.id ?? agDocId
+      ).trim();
+      if (handledWoIds.has(targetWoId) || handledWoIds.has(agDocId)) return;
+
+      const linkedItems = [
+        ...(artifactItemsByWoId.get(targetWoId) || []),
+        ...(targetWoId !== agDocId
+          ? artifactItemsByWoId.get(agDocId) || []
+          : []),
+      ];
+
+      const normalizedAgWo = normalizeLegacyWorkOrder(
+        rawAg,
+        targetWoId,
+        ownerId,
+        linkedItems
+      );
+      if (normalizedAgWo) {
+        handledWoIds.add(targetWoId);
+        handledWoIds.add(agDocId);
+        finalOrdersMap.set(normalizedAgWo.id, normalizedAgWo);
+      }
+    });
+
+    // 3. 若 items 子集合有孤立的 workOrderId，自動還原為工令卡片
     artifactItemsByWoId.forEach((itemsList, orphanWoId) => {
       if (handledWoIds.has(orphanWoId) || itemsList.length === 0) return;
 
-      const existingInRoot = finalOrdersMap.get(orphanWoId);
-      if (existingInRoot) {
-        // 若該工令主檔在根目錄，將子集合明細合併進去
-        const mergedItems = sortMoItemsByCode(
-          existingInRoot.items.length > 0 ? existingInRoot.items : itemsList
-        );
-        finalOrdersMap.set(orphanWoId, {
-          ...existingInRoot,
-          items: mergedItems,
-          totalAmount: mergedItems.reduce((sum, i) => sum + i.subtotal, 0),
-        });
-      } else {
-        // 自動為孤立的 workOrderId 建立還原工令卡片
-        const sorted = sortMoItemsByCode(itemsList);
-        const total = sorted.reduce((sum, i) => sum + i.subtotal, 0);
-        finalOrdersMap.set(orphanWoId, {
-          id: orphanWoId,
-          woNumber: orphanWoId.slice(0, 10).toUpperCase(),
-          title: `還原工令 (${sorted[0]?.name || orphanWoId.slice(0, 6)})`,
+      const suppMeta = findSupplementalMeta(orphanWoId);
+      if (suppMeta) {
+        const recoveredWo = normalizeLegacyWorkOrder(
+          suppMeta,
+          orphanWoId,
           ownerId,
-          ownerName: '',
-          contractId: CONTRACT_DATABASES[0]?.id || 'contract-1',
-          status: '進行中',
-          items: sorted,
-          totalAmount: total,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
+          itemsList
+        );
+        if (recoveredWo && !isPlaceholderWoTitle(recoveredWo.title)) {
+          finalOrdersMap.set(orphanWoId, recoveredWo);
+          return;
+        }
       }
+
+      const sorted = sortMoItemsByCode(itemsList);
+      const total = sorted.reduce((sum, i) => sum + i.subtotal, 0);
+      finalOrdersMap.set(orphanWoId, {
+        id: orphanWoId,
+        woNumber: orphanWoId.slice(0, 10).toUpperCase(),
+        title: `還原工令 (${sorted[0]?.name || orphanWoId.slice(0, 6)})`,
+        ownerId,
+        ownerName: '',
+        contractId: CONTRACT_DATABASES[0]?.id || 'contract-1',
+        status: '進行中',
+        items: sorted,
+        totalAmount: total,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
     });
 
     const combined = Array.from(finalOrdersMap.values()).sort((a, b) =>
@@ -441,7 +771,43 @@ export const subscribeUserWorkOrders = (
     onUpdate(combined);
   };
 
-  // 監聽 1：artifacts/mobile-mo/users/{uid}/workOrders (原版工令主檔子集合)
+  // 檢查使用者文件本身是否內嵌舊工令陣列
+  const checkUserDocEmbeddedOrders = async () => {
+    try {
+      const userDocRef = doc(
+        db,
+        ARTIFACTS_COLLECTION,
+        APP_ARTIFACT_ID,
+        USERS_COLLECTION,
+        ownerId
+      );
+      const userSnap = await getDoc(userDocRef);
+      if (userSnap.exists()) {
+        const data = userSnap.data() as Record<string, unknown>;
+        const embeddedList =
+          (Array.isArray(data.workOrders) && data.workOrders) ||
+          (Array.isArray(data.orders) && data.orders) ||
+          [];
+        embeddedList.forEach((rawItem, idx) => {
+          if (rawItem && typeof rawItem === 'object') {
+            const obj = rawItem as Record<string, unknown>;
+            const id = String(
+              obj.id ?? obj.workOrderId ?? `user-emb-${idx}`
+            ).trim();
+            if (!artifactRawWorkOrders.has(id)) {
+              artifactRawWorkOrders.set(id, obj);
+            }
+          }
+        });
+        rebuildAndEmitOrders();
+      }
+    } catch {
+      // 忽略讀取限制
+    }
+  };
+  void checkUserDocEmbeddedOrders();
+
+  // 監聽 1：artifacts/mobile-mo/users/{uid}/workOrders
   const userWorkOrdersColRef = collection(
     db,
     ARTIFACTS_COLLECTION,
@@ -461,14 +827,47 @@ export const subscribeUserWorkOrders = (
           docSnap.data() as Record<string, unknown>
         );
       });
+      initialSync.workOrders = true;
       rebuildAndEmitOrders();
     },
     (err) => {
       console.warn('讀取 artifacts workOrders 子集合時發生錯誤：', err);
+      initialSync.workOrders = true;
+      rebuildAndEmitOrders();
     }
   );
 
-  // 監聽 2：artifacts/mobile-mo/users/{uid}/items (原版工令明細子集合)
+  // 監聽 2：artifacts/mobile-mo/users/{uid}/agreements
+  const userAgreementsColRef = collection(
+    db,
+    ARTIFACTS_COLLECTION,
+    APP_ARTIFACT_ID,
+    USERS_COLLECTION,
+    ownerId,
+    AGREEMENTS_SUBCOLLECTION
+  );
+
+  const unsubArtifactAgreements = onSnapshot(
+    userAgreementsColRef,
+    (snapshot) => {
+      artifactRawAgreements.clear();
+      snapshot.forEach((docSnap) => {
+        artifactRawAgreements.set(
+          docSnap.id,
+          docSnap.data() as Record<string, unknown>
+        );
+      });
+      initialSync.agreements = true;
+      rebuildAndEmitOrders();
+    },
+    (err) => {
+      console.warn('讀取 artifacts agreements 子集合時略過：', err);
+      initialSync.agreements = true;
+      rebuildAndEmitOrders();
+    }
+  );
+
+  // 監聽 3：artifacts/mobile-mo/users/{uid}/items
   const userItemsColRef = collection(
     db,
     ARTIFACTS_COLLECTION,
@@ -482,6 +881,7 @@ export const subscribeUserWorkOrders = (
     userItemsColRef,
     (snapshot) => {
       artifactItemsByWoId.clear();
+      itemRawMetaByWoId.clear();
       snapshot.forEach((docSnap) => {
         const raw = docSnap.data() as Record<string, unknown>;
         const woId = String(
@@ -491,48 +891,41 @@ export const subscribeUserWorkOrders = (
         const list = artifactItemsByWoId.get(woId) || [];
         list.push(normalizedItem);
         artifactItemsByWoId.set(woId, list);
+
+        if (
+          raw.workOrderNo ||
+          raw.workOrderName ||
+          raw.orderNo ||
+          raw.orderName ||
+          raw.woNumber ||
+          raw.woName
+        ) {
+          itemRawMetaByWoId.set(woId, {
+            no: raw.workOrderNo ?? raw.orderNo ?? raw.woNumber,
+            name: raw.workOrderName ?? raw.orderName ?? raw.woName,
+          });
+        }
       });
+      initialSync.items = true;
       rebuildAndEmitOrders();
     },
     (err) => {
       console.warn('讀取 artifacts items 子集合時發生錯誤：', err);
-    }
-  );
-
-  // 監聽 3：根目錄 workOrders (相容改版過渡期建立之工令)
-  const rootWoQuery = query(
-    collection(db, WORK_ORDERS_SUBCOLLECTION),
-    where('ownerId', '==', ownerId)
-  );
-
-  const unsubRootWorkOrders = onSnapshot(
-    rootWoQuery,
-    (snapshot) => {
-      rootWorkOrdersMap.clear();
-      snapshot.forEach((docSnap) => {
-        const raw = docSnap.data() as Record<string, unknown>;
-        const wo = normalizeLegacyWorkOrder(raw, docSnap.id, ownerId);
-        if (wo) {
-          rootWorkOrdersMap.set(wo.id, wo);
-        }
-      });
+      initialSync.items = true;
       rebuildAndEmitOrders();
-    },
-    () => {
-      // 忽略根目錄權限或連線警告
     }
   );
 
   return () => {
     unsubArtifactWorkOrders();
+    unsubArtifactAgreements();
     unsubArtifactItems();
-    unsubRootWorkOrders();
   };
 };
 
 /**
  * 新增或更新單筆個人工令
- * 同步寫入 artifacts/mobile-mo/users/{uid}/workOrders 與 items 子集合
+ * 唯一寫入目標：artifacts/mobile-mo/users/{uid}/workOrders 與 items 子集合
  */
 export const saveUserWorkOrder = async (
   ownerId: string,
@@ -559,7 +952,9 @@ export const saveUserWorkOrder = async (
 
   // 1. 樂觀更新本地快取
   const currentOrders = loadLocalWorkOrders(ownerId);
-  const existingIndex = currentOrders.findIndex((o) => o.id === securedOrder.id);
+  const existingIndex = currentOrders.findIndex(
+    (o) => o.id === securedOrder.id
+  );
   if (existingIndex >= 0) {
     currentOrders[existingIndex] = securedOrder;
   } else {
@@ -567,7 +962,104 @@ export const saveUserWorkOrder = async (
   }
   saveLocalWorkOrders(ownerId, currentOrders);
 
-  // 2. 寫入 artifacts/mobile-mo/users/{uid}/workOrders/{workOrderId}（同時保留舊版欄位名稱 no, name）
+  // 2. 使用單一 WriteBatch 原子化更新 workOrders 主檔與 items 明細子集合
+  const userWorkOrdersColRef = collection(
+    db,
+    ARTIFACTS_COLLECTION,
+    APP_ARTIFACT_ID,
+    USERS_COLLECTION,
+    ownerId,
+    WORK_ORDERS_SUBCOLLECTION
+  );
+  const userItemsColRef = collection(
+    db,
+    ARTIFACTS_COLLECTION,
+    APP_ARTIFACT_ID,
+    USERS_COLLECTION,
+    ownerId,
+    ITEMS_SUBCOLLECTION
+  );
+
+  const existingItemsSnap = await getDocs(
+    query(userItemsColRef, where('workOrderId', '==', securedOrder.id))
+  );
+
+  const batch = writeBatch(db);
+
+  // (a) 寫入工令主檔至 artifacts/mobile-mo/users/{uid}/workOrders/{id}
+  const artifactWoDocRef = doc(userWorkOrdersColRef, securedOrder.id);
+  batch.set(
+    artifactWoDocRef,
+    {
+      id: securedOrder.id,
+      no: securedOrder.woNumber,
+      woNumber: securedOrder.woNumber,
+      name: securedOrder.title,
+      title: securedOrder.title,
+      contractId: securedOrder.contractId,
+      totalAmount: securedOrder.totalAmount,
+      ownerId,
+      ownerName: securedOrder.ownerName,
+      status: securedOrder.status,
+      createdAt: securedOrder.createdAt,
+      updatedAt: securedOrder.updatedAt,
+    },
+    { merge: true }
+  );
+
+  // (b) 刪除該工令下已被移除的舊明細文件
+  const nextItemIds = new Set(sortedItems.map((i) => i.id));
+  existingItemsSnap.forEach((docSnap) => {
+    if (!nextItemIds.has(docSnap.id)) {
+      batch.delete(docSnap.ref);
+    }
+  });
+
+  // (c) 寫入該工令目前的所有明細至 artifacts/mobile-mo/users/{uid}/items/{itemId}
+  sortedItems.forEach((item) => {
+    const itemDocRef = doc(userItemsColRef, item.id);
+    batch.set(itemDocRef, {
+      id: item.id,
+      no: item.code,
+      name: item.name,
+      spec: item.spec || '',
+      price: item.unitPrice,
+      qty: item.quantity,
+      workOrderId: securedOrder.id,
+      workOrderNo: securedOrder.woNumber,
+      workOrderName: securedOrder.title,
+    });
+  });
+
+  await batch.commit();
+};
+
+/**
+ * 刪除單筆個人工令（同步刪除統一集合下的 workOrders 主檔、agreements 與 items 子集合明細）
+ */
+export const deleteUserWorkOrder = async (
+  ownerId: string,
+  workOrderId: string
+): Promise<void> => {
+  const currentOrders = loadLocalWorkOrders(ownerId);
+  const nextOrders = currentOrders.filter((o) => o.id !== workOrderId);
+  saveLocalWorkOrders(ownerId, nextOrders);
+
+  const userItemsColRef = collection(
+    db,
+    ARTIFACTS_COLLECTION,
+    APP_ARTIFACT_ID,
+    USERS_COLLECTION,
+    ownerId,
+    ITEMS_SUBCOLLECTION
+  );
+  const itemsSnap = await getDocs(
+    query(userItemsColRef, where('workOrderId', '==', workOrderId))
+  );
+
+  const batch = writeBatch(db);
+
+  // 1. 刪除 artifacts/mobile-mo/users/{uid}/workOrders/{workOrderId}
   const artifactWoDocRef = doc(
     db,
     ARTIFACTS_COLLECTION,
@@ -575,129 +1067,26 @@ export const saveUserWorkOrder = async (
     USERS_COLLECTION,
     ownerId,
     WORK_ORDERS_SUBCOLLECTION,
-    securedOrder.id
+    workOrderId
   );
+  batch.delete(artifactWoDocRef);
 
-  await setDoc(
-    artifactWoDocRef,
-    {
-      ...securedOrder,
-      no: securedOrder.woNumber,
-      name: securedOrder.title,
-      itemsMigrated: true,
-    },
-    { merge: true }
+  // 2. 刪除 artifacts/mobile-mo/users/{uid}/agreements/{workOrderId}（若存在）
+  const artifactAgDocRef = doc(
+    db,
+    ARTIFACTS_COLLECTION,
+    APP_ARTIFACT_ID,
+    USERS_COLLECTION,
+    ownerId,
+    AGREEMENTS_SUBCOLLECTION,
+    workOrderId
   );
+  batch.delete(artifactAgDocRef);
 
-  // 3. 同步更新 artifacts/mobile-mo/users/{uid}/items 子集合內該工令的所有明細
-  try {
-    const userItemsColRef = collection(
-      db,
-      ARTIFACTS_COLLECTION,
-      APP_ARTIFACT_ID,
-      USERS_COLLECTION,
-      ownerId,
-      ITEMS_SUBCOLLECTION
-    );
-    const existingItemsSnap = await getDocs(
-      query(userItemsColRef, where('workOrderId', '==', securedOrder.id))
-    );
+  // 3. 刪除 artifacts/mobile-mo/users/{uid}/items 中所有屬於該工令的明細
+  itemsSnap.forEach((docSnap) => {
+    batch.delete(docSnap.ref);
+  });
 
-    const batch = writeBatch(db);
-    const nextItemIds = new Set(sortedItems.map((i) => i.id));
-
-    // 刪除已被移除的舊明細文件
-    existingItemsSnap.forEach((docSnap) => {
-      if (!nextItemIds.has(docSnap.id)) {
-        batch.delete(docSnap.ref);
-      }
-    });
-
-    // 新增或更新目前的明細文件（相容原版 id, name, no, price, qty, workOrderId 格式）
-    sortedItems.forEach((item) => {
-      const itemDocRef = doc(userItemsColRef, item.id);
-      batch.set(itemDocRef, {
-        id: item.id,
-        no: item.code,
-        name: item.name,
-        spec: item.spec || '',
-        price: item.unitPrice,
-        qty: item.quantity,
-        workOrderId: securedOrder.id,
-      });
-    });
-
-    await batch.commit();
-  } catch (err) {
-    console.warn('同步寫入 items 子集合時略過：', err);
-  }
-
-  // 4. 若根目錄 workOrders 也有此工令，同步更新
-  try {
-    const rootDocRef = doc(db, WORK_ORDERS_SUBCOLLECTION, securedOrder.id);
-    await setDoc(rootDocRef, securedOrder, { merge: true });
-  } catch {
-    // 忽略根目錄寫入限制
-  }
-};
-
-/**
- * 刪除單筆個人工令（同步刪除 workOrders 主檔與 items 子集合中對應該 workOrderId 的所有明細）
- */
-export const deleteUserWorkOrder = async (
-  ownerId: string,
-  workOrderId: string
-): Promise<void> => {
-  // 1. 移除本地快取
-  const currentOrders = loadLocalWorkOrders(ownerId);
-  const nextOrders = currentOrders.filter((o) => o.id !== workOrderId);
-  saveLocalWorkOrders(ownerId, nextOrders);
-
-  // 2. 刪除 artifacts/mobile-mo/users/{uid}/workOrders/{workOrderId}
-  try {
-    const artifactWoDocRef = doc(
-      db,
-      ARTIFACTS_COLLECTION,
-      APP_ARTIFACT_ID,
-      USERS_COLLECTION,
-      ownerId,
-      WORK_ORDERS_SUBCOLLECTION,
-      workOrderId
-    );
-    await deleteDoc(artifactWoDocRef);
-  } catch (err) {
-    console.warn('刪除 artifacts workOrder 主檔時略過：', err);
-  }
-
-  // 3. 批次刪除 artifacts/mobile-mo/users/{uid}/items 中所有 workOrderId === 該工令的明細文件
-  try {
-    const userItemsColRef = collection(
-      db,
-      ARTIFACTS_COLLECTION,
-      APP_ARTIFACT_ID,
-      USERS_COLLECTION,
-      ownerId,
-      ITEMS_SUBCOLLECTION
-    );
-    const itemsSnap = await getDocs(
-      query(userItemsColRef, where('workOrderId', '==', workOrderId))
-    );
-    if (!itemsSnap.empty) {
-      const batch = writeBatch(db);
-      itemsSnap.forEach((docSnap) => {
-        batch.delete(docSnap.ref);
-      });
-      await batch.commit();
-    }
-  } catch (err) {
-    console.warn('清理 artifacts items 明細子集合時略過：', err);
-  }
-
-  // 4. 同步刪除根目錄 workOrders 中的文件（若存在）
-  try {
-    const rootDocRef = doc(db, WORK_ORDERS_SUBCOLLECTION, workOrderId);
-    await deleteDoc(rootDocRef);
-  } catch {
-    // 忽略根目錄不存在之情況
-  }
+  await batch.commit();
 };
