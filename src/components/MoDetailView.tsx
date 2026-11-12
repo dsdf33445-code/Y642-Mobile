@@ -1,15 +1,15 @@
 // src/components/MoDetailView.tsx
 // ============================================================================
 // 工令明細 (MO 明細) 視圖組件
-// 升級項目：
-// 1. 加入「刪除明細確認視窗 Modal」
-// 2. 全面刪除「單位」顯示與輸入框
-// 3. 已加入明細自動按照「項目編號 (code)」自然排列
-// 4. 已加入項目限制最低數量：1，最高數量：999
+// 本次更新重點：
+// 1. 刪除最上方工令切換下拉選單
+// 2. 刪除「+ 手動新增非合約工項」按鈕與表單
+// 3. 新增項目改回右下角「浮動按鈕 (FAB)」，點擊後彈出「新增項目視窗 (Modal)」，
+//    避免明細項目太多時需要往下滑很久才能新增
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback, memo } from 'react';
-import type { FC, FormEvent } from 'react';
+import type { FC } from 'react';
 import {
   Database,
   RefreshCw,
@@ -21,10 +21,10 @@ import {
   AlertCircle,
   CheckCircle2,
   FileSpreadsheet,
-  Sparkles,
   FileDown,
   ExternalLink,
   AlertTriangle,
+  X,
 } from 'lucide-react';
 import type {
   WorkOrder,
@@ -42,7 +42,7 @@ import { sortMoItemsByCode } from '../firebase';
 interface MoDetailViewProps {
   /** 目前檢視/編輯中的工令（若未選取則為 null） */
   workOrder: WorkOrder | null;
-  /** 所有可用的個人工令（供頂部快速切換不同工令） */
+  /** 所有可用的個人工令 */
   allWorkOrders: WorkOrder[];
   /** 可選擇的多重合約清單 */
   contracts: ContractConfig[];
@@ -84,16 +84,10 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       useState<boolean>(false);
     const [resolvedSourceUrl, setResolvedSourceUrl] = useState<string>('');
 
-    // 資料庫工項搜尋與分類過濾狀態
+    // 「新增項目視窗 (Modal)」開關與搜尋過濾狀態
+    const [isAddModalOpen, setIsAddModalOpen] = useState<boolean>(false);
     const [catalogSearch, setCatalogSearch] = useState<string>('');
     const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
-
-    // 手動自訂新增 MO 工項表單狀態（已移除單位欄位）
-    const [showCustomForm, setShowCustomForm] = useState<boolean>(false);
-    const [customCode, setCustomCode] = useState('');
-    const [customName, setCustomName] = useState('');
-    const [customSpec, setCustomSpec] = useState('');
-    const [customPrice, setCustomPrice] = useState('');
 
     // 刪除單筆 MO 明細確認視窗狀態
     const [deletingItem, setDeletingItem] = useState<MoLineItem | null>(null);
@@ -108,6 +102,17 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
     const sortedOrderItems = useMemo(() => {
       if (!workOrder) return [];
       return sortMoItemsByCode(workOrder.items);
+    }, [workOrder]);
+
+    // 建立已加入項目的數量對照表（方便在彈出視窗中顯示某項目目前已加入數量）
+    const addedQtyMap = useMemo(() => {
+      const map = new Map<string, number>();
+      if (!workOrder) return map;
+      workOrder.items.forEach((item) => {
+        const key = `${item.code}__${item.name}`;
+        map.set(key, (map.get(key) || 0) + item.quantity);
+      });
+      return map;
     }, [workOrder]);
 
     // 載入指定合約資料庫
@@ -256,7 +261,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       commitOrderItems(updatedItems, newContractId);
     };
 
-    // 從合約資料庫點擊「+ 加入」帶入 MO 明細（最高數量限制 999，並自動按編號排序）
+    // 從彈出視窗點擊「+ 加入」帶入 MO 明細（最高數量限制 999，並自動按編號排序）
     const handleAddFromCatalog = (product: ContractProductItem) => {
       if (!workOrder) return;
       const existingIndex = workOrder.items.findIndex(
@@ -317,31 +322,6 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       commitOrderItems(nextItems);
     };
 
-    // 新增自訂工項送出
-    const handleAddCustomItem = (e: FormEvent) => {
-      e.preventDefault();
-      if (!workOrder || !customName.trim()) return;
-      const priceNum = Math.max(0, Number(customPrice) || 0);
-
-      const newItem: MoLineItem = {
-        id: `custom-${Date.now()}`,
-        code: customCode.trim() || 'CUSTOM',
-        name: customName.trim(),
-        spec: customSpec.trim(),
-        unit: '式',
-        unitPrice: priceNum,
-        quantity: 1,
-        subtotal: Math.round(priceNum),
-      };
-
-      commitOrderItems([...workOrder.items, newItem]);
-      setCustomCode('');
-      setCustomName('');
-      setCustomSpec('');
-      setCustomPrice('');
-      setShowCustomForm(false);
-    };
-
     if (!workOrder) {
       return (
         <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center space-y-3">
@@ -350,9 +330,9 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
             尚未選擇要編輯的工令
           </h3>
           <p className="text-xs text-slate-500 max-w-sm mx-auto">
-            請先從「工令管理」點選一筆工令，或直接從下方下拉選單挑選屬於您的工令。
+            請先從「工令管理」點選一筆工令以檢視或新增 MO 明細。
           </p>
-          {allWorkOrders.length > 0 ? (
+          {allWorkOrders.length > 0 && (
             <div className="max-w-xs mx-auto pt-2">
               <select
                 value=""
@@ -371,23 +351,24 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                 ))}
               </select>
             </div>
-          ) : (
+          )}
+          <div className="pt-1">
             <button
               type="button"
               onClick={onBackToList}
               className="inline-flex items-center gap-1.5 bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-semibold cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4" />
-              前往建立工令
+              返回工令管理
             </button>
-          )}
+          </div>
         </div>
       );
     }
 
     return (
-      <div className="space-y-4 pb-24">
-        {/* 頂部工令資訊、「前往 MO」連結、「匯出 Excel」與「選擇合約」 */}
+      <div className="space-y-4 pb-28">
+        {/* 頂部工令資訊、「前往 MO」連結、「匯出 Excel」與「選擇合約」（已刪除最上方工令切換下拉選單） */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3.5">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <button
@@ -400,19 +381,6 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
             </button>
 
             <div className="flex items-center gap-2 flex-wrap">
-              {/* 快速切換其他工令 */}
-              <select
-                value={workOrder.id}
-                onChange={(e) => onSelectOrder(e.target.value)}
-                className="text-xs bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {allWorkOrders.map((wo) => (
-                  <option key={wo.id} value={wo.id}>
-                    工令：{wo.woNumber} - {wo.title}
-                  </option>
-                ))}
-              </select>
-
               {/* 匯出特定 Excel 檔案按鈕 */}
               <button
                 type="button"
@@ -520,72 +488,26 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
           </div>
         </div>
 
-        {/* 已選入此工令的 MO 明細清單（自動依項目編號排列、無單位顯示、數量限制 1~999） */}
+        {/* 已選入此工令的 MO 明細清單（已刪除「+ 手動新增非合約工項」） */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
               <span>已選入工令之 MO 明細 ({sortedOrderItems.length})</span>
             </h3>
-
-            <button
-              type="button"
-              onClick={() => setShowCustomForm((prev) => !prev)}
-              className="text-xs font-semibold text-blue-600 hover:text-blue-800 cursor-pointer"
-            >
-              {showCustomForm ? '收起自訂工項' : '+ 手動新增非合約工項'}
-            </button>
           </div>
 
-          {/* 手動新增表單（已移除單位輸入框） */}
-          {showCustomForm && (
-            <form
-              onSubmit={handleAddCustomItem}
-              className="bg-slate-50 p-3 rounded-xl border border-slate-200 grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs"
-            >
-              <input
-                type="text"
-                placeholder="項目編號"
-                value={customCode}
-                onChange={(e) => setCustomCode(e.target.value)}
-                className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg"
-              />
-              <input
-                type="text"
-                required
-                placeholder="項目名稱 *"
-                value={customName}
-                onChange={(e) => setCustomName(e.target.value)}
-                className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg"
-              />
-              <input
-                type="text"
-                placeholder="規格說明"
-                value={customSpec}
-                onChange={(e) => setCustomSpec(e.target.value)}
-                className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg"
-              />
-              <input
-                type="number"
-                min="0"
-                step="any"
-                placeholder="單價"
-                value={customPrice}
-                onChange={(e) => setCustomPrice(e.target.value)}
-                className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg"
-              />
-              <button
-                type="submit"
-                className="col-span-2 sm:col-span-1 bg-blue-600 text-white font-semibold rounded-lg px-3 py-1.5 hover:bg-blue-700 cursor-pointer"
-              >
-                加入明細
-              </button>
-            </form>
-          )}
-
           {sortedOrderItems.length === 0 ? (
-            <div className="text-center py-6 text-xs text-slate-400 border border-dashed border-slate-200 rounded-xl">
-              尚未加入任何 MO 明細，請從下方「合約工項資料庫」搜尋並點擊加入。
+            <div className="text-center py-8 text-xs text-slate-400 border border-dashed border-slate-200 rounded-xl space-y-2">
+              <p>尚未加入任何 MO 明細項目</p>
+              <button
+                type="button"
+                onClick={() => setIsAddModalOpen(true)}
+                className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 px-3.5 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>點擊新增項目</span>
+              </button>
             </div>
           ) : (
             <div className="divide-y divide-slate-100">
@@ -606,7 +528,6 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                         {item.name}
                       </span>
                     </div>
-                    {/* 已刪除單位顯示，僅顯示規格與單價 */}
                     <div className="text-xs text-slate-500 flex items-center gap-3 flex-wrap">
                       {item.spec && <span>規格：{item.spec}</span>}
                       <span>單價：${item.unitPrice.toLocaleString()}</span>
@@ -667,7 +588,6 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                       </div>
                     </div>
 
-                    {/* 點擊垃圾桶開啟刪除確認視窗 */}
                     <button
                       type="button"
                       title="刪除此明細項目"
@@ -683,96 +603,158 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
           )}
         </div>
 
-        {/* 下方：合約資料庫搜尋與快速選取區（已刪除單位顯示） */}
-        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 text-blue-600" />
-              <span>
-                合約工項資料庫搜尋（共 {catalogItems.length} 筆，點擊「+ 加入」帶入明細）
-              </span>
-            </h3>
-          </div>
+        {/* 右下角浮動按鈕 (FAB)：點擊跳出「新增項目視窗」 */}
+        <button
+          type="button"
+          onClick={() => setIsAddModalOpen(true)}
+          title="新增項目"
+          className="fixed bottom-20 right-5 z-30 inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-4 py-3.5 rounded-full shadow-lg hover:shadow-xl transition-all cursor-pointer font-semibold text-sm"
+        >
+          <Plus className="w-5 h-5" />
+          <span>新增項目</span>
+        </button>
 
-          <div className="flex flex-col sm:flex-row gap-2">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={catalogSearch}
-                onChange={(e) => setCatalogSearch(e.target.value)}
-                placeholder="輸入項目編號、名稱或規格快速檢索..."
-                className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            {categories.length > 2 && (
-              <select
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-700"
-              >
-                {categories.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat === 'ALL' ? '全部工作表 / 分類' : cat}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-
-          {isLoadingCatalog ? (
-            <div className="py-10 text-center text-xs text-slate-500">
-              正在讀取並解析合約單價資料庫...
-            </div>
-          ) : filteredCatalog.length === 0 ? (
-            <div className="py-8 text-center text-xs text-slate-400">
-              {catalogItems.length === 0
-                ? '目前資料庫尚無工項，請點擊上方重新載入圖示按鈕。'
-                : `找不到符合「${catalogSearch}」的合約工項`}
-            </div>
-          ) : (
-            <div className="max-h-96 overflow-y-auto divide-y divide-slate-100 pr-1">
-              {filteredCatalog.map((prod, idx) => (
-                <div
-                  key={`${prod.code}-${idx}`}
-                  className="py-2.5 flex items-center justify-between gap-3 hover:bg-slate-50/80 px-2 rounded-lg transition-colors"
+        {/* 彈出式「新增項目視窗 (Add Item Modal)」 */}
+        {isAddModalOpen && (
+          <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+            <div className="bg-white rounded-2xl max-w-xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+              {/* 視窗標題列 */}
+              <div className="px-4 py-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-800">
+                    新增項目
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    目前合約：{activeContract?.name}（共 {catalogItems.length} 筆工項）
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsAddModalOpen(false)}
+                  className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-xl transition-colors cursor-pointer"
                 >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-[11px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">
-                        {prod.code}
-                      </span>
-                      <span className="text-sm font-medium text-slate-800 truncate">
-                        {prod.name}
-                      </span>
-                    </div>
-                    {/* 已刪除單位顯示 */}
-                    <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
-                      {prod.spec && (
-                        <span className="truncate">規格：{prod.spec}</span>
-                      )}
-                      <span className="font-mono font-semibold text-slate-700">
-                        單價：${prod.unitPrice.toLocaleString()}
-                      </span>
-                    </div>
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* 搜尋與分類篩選列 */}
+              <div className="p-3.5 border-b border-slate-100 space-y-2 bg-white">
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="relative flex-1">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      autoFocus
+                      value={catalogSearch}
+                      onChange={(e) => setCatalogSearch(e.target.value)}
+                      placeholder="輸入項目編號、名稱或規格快速搜尋..."
+                      className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    {catalogSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setCatalogSearch('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => handleAddFromCatalog(prod)}
-                    className="shrink-0 inline-flex items-center gap-1 bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>加入</span>
-                  </button>
+                  {categories.length > 2 && (
+                    <select
+                      value={selectedCategory}
+                      onChange={(e) => setSelectedCategory(e.target.value)}
+                      className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-700"
+                    >
+                      {categories.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat === 'ALL' ? '全部工作表 / 分類' : cat}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+              </div>
 
-        {/* 美化版：刪除 MO 明細項目確認視窗 (Delete Item Confirmation Modal) */}
+              {/* 合約工項捲動列表 */}
+              <div className="flex-1 overflow-y-auto divide-y divide-slate-100 px-3.5 py-2">
+                {isLoadingCatalog ? (
+                  <div className="py-12 text-center text-xs text-slate-500">
+                    正在讀取並解析合約單價資料庫...
+                  </div>
+                ) : filteredCatalog.length === 0 ? (
+                  <div className="py-12 text-center text-xs text-slate-400">
+                    {catalogItems.length === 0
+                      ? '目前資料庫尚無工項，請先關閉視窗並點擊重新載入圖示按鈕。'
+                      : `找不到符合「${catalogSearch}」的合約工項`}
+                  </div>
+                ) : (
+                  filteredCatalog.map((prod, idx) => {
+                    const addedQty =
+                      addedQtyMap.get(`${prod.code}__${prod.name}`) || 0;
+
+                    return (
+                      <div
+                        key={`${prod.code}-${idx}`}
+                        className="py-2.5 flex items-center justify-between gap-3 hover:bg-slate-50/80 px-2 rounded-xl transition-colors"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono text-[11px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200/60">
+                              {prod.code}
+                            </span>
+                            <span className="text-sm font-bold text-slate-800 truncate">
+                              {prod.name}
+                            </span>
+                            {addedQty > 0 && (
+                              <span className="text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.2 rounded-md">
+                                已加: {addedQty}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
+                            {prod.spec && (
+                              <span className="truncate">規格：{prod.spec}</span>
+                            )}
+                            <span className="font-mono font-semibold text-slate-700">
+                              單價：${prod.unitPrice.toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleAddFromCatalog(prod)}
+                          className="shrink-0 inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-3 py-1.5 rounded-xl text-xs font-semibold shadow-2xs transition-all cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>加入</span>
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* 視窗底部完成列 */}
+              <div className="px-4 py-3 border-t border-slate-100 bg-slate-50 flex items-center justify-between">
+                <span className="text-xs text-slate-600 font-medium">
+                  目前已選入 <strong className="text-blue-600">{sortedOrderItems.length}</strong> 項明細
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsAddModalOpen(false)}
+                  className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-xl cursor-pointer transition-colors"
+                >
+                  完成
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 美化版：刪除 MO 明細項目確認視窗 */}
         {deletingItem && (
           <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 space-y-4 text-center">
