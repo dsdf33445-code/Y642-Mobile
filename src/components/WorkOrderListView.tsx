@@ -1,12 +1,9 @@
 // src/components/WorkOrderListView.tsx
 // ============================================================================
 // 工令管理列表視圖組件
-// 升級項目：
-// 1. 刪除確認視窗美化（自訂高質感 Modal 取代 window.confirm）
-// 2. 刪除「全部、進行中、已完成」篩選與卡片狀態顯示
-// 3. 工令卡片版面與視覺層次優化
-// 4. 「勾選工令」按鈕文字改為「全選」
-// 5. 建立/編輯/合併工令時，工令編號限制英文數字，最少 8 碼、最多 10 碼
+// 本次更新重點：
+// 1. 刪除頂部「累計總金額」顯示，僅保留簡潔的「個人工令總數」顯示
+// 2. 維持刪除確認視窗美化、全選按鈕、合併工令與 8~10 碼英數工令編號驗證
 // ============================================================================
 
 import { useState, useMemo, memo } from 'react';
@@ -121,7 +118,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
       return map;
     }, [contracts]);
 
-    // 篩選後的工令列表（已移除全部/進行中/已完成狀態過濾）
+    // 篩選後的工令列表
     const filteredOrders = useMemo(() => {
       const kw = searchTerm.trim().toLowerCase();
       if (!kw) return workOrders;
@@ -137,18 +134,6 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
       () => workOrders.filter((o) => checkedIds.includes(o.id)),
       [workOrders, checkedIds]
     );
-
-    // 統計摘要數據（僅顯示個人工令總數與累計總金額）
-    const stats = useMemo(() => {
-      let totalAmountSum = 0;
-      workOrders.forEach((o) => {
-        totalAmountSum += o.totalAmount || 0;
-      });
-      return {
-        totalCount: workOrders.length,
-        totalAmountSum,
-      };
-    }, [workOrders]);
 
     // 切換單筆工令勾選狀態
     const toggleCheckOrder = (id: string) => {
@@ -289,22 +274,14 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
 
     return (
       <div className="space-y-4 pb-24">
-        {/* 頂部個人工令統計卡片（已移除進行中狀態統計） */}
-        <div className="grid grid-cols-2 gap-3 bg-white p-3.5 rounded-2xl shadow-xs border border-slate-200/90">
+        {/* 頂部個人工令統計卡片（已刪除累計總金額顯示） */}
+        <div className="bg-white p-3.5 rounded-2xl shadow-xs border border-slate-200/90">
           <div className="bg-slate-50/90 px-4 py-3 rounded-xl flex items-center justify-between border border-slate-100">
-            <span className="text-xs font-semibold text-slate-500">
+            <span className="text-xs font-semibold text-slate-600">
               個人工令總數
             </span>
             <span className="text-xl font-extrabold text-slate-800 font-mono">
-              {stats.totalCount}
-            </span>
-          </div>
-          <div className="bg-emerald-50/70 px-4 py-3 rounded-xl flex items-center justify-between border border-emerald-100">
-            <span className="text-xs font-semibold text-emerald-700">
-              累計總金額
-            </span>
-            <span className="text-base sm:text-lg font-extrabold text-emerald-700 font-mono truncate ml-2">
-              ${stats.totalAmountSum.toLocaleString()}
+              {workOrders.length}
             </span>
           </div>
         </div>
@@ -325,7 +302,6 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
           {/* 功能按鈕列：全選、合併工令、新增工令 */}
           <div className="flex items-center justify-between gap-2 flex-wrap pt-1 border-t border-slate-100">
             <div className="flex items-center gap-2 flex-wrap">
-              {/* 「勾選工令」已改為「全選」 */}
               <button
                 type="button"
                 onClick={toggleSelectAll}
@@ -374,7 +350,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
           </div>
         </div>
 
-        {/* 工令卡片列表（顯示優化版） */}
+        {/* 工令卡片列表 */}
         {filteredOrders.length === 0 ? (
           <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-10 text-center space-y-2">
             <FolderOpen className="w-10 h-10 text-slate-300 mx-auto" />
@@ -478,7 +454,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                           <Pencil className="w-4 h-4" />
                         </button>
 
-                        {/* 刪除工令按鈕（開啟美化確認視窗） */}
+                        {/* 刪除工令按鈕 */}
                         <button
                           type="button"
                           title="刪除此工令"
@@ -499,7 +475,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
           </div>
         )}
 
-        {/* 美化版：刪除工令確認視窗 (Delete Confirmation Modal) */}
+        {/* 美化版：刪除工令確認視窗 */}
         {deletingOrder && (
           <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 space-y-4 text-center">
@@ -553,7 +529,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
           </div>
         )}
 
-        {/* 建立新工令彈出視窗（工令編號限制 8~10 碼英數） */}
+        {/* 建立新工令彈出視窗 */}
         {isCreateModalOpen && (
           <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-xl border border-slate-200 space-y-4">
@@ -581,7 +557,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                           : 'text-slate-400'
                       }`}
                     >
-                      {woNumber.length} / 10 碼 (限 8~10 碼)
+                      {woNumber.length} / 10 碼 (限 8~10 碼英數)
                     </span>
                   </div>
                   <input
@@ -594,7 +570,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                       setWoNumber(sanitizeWoNumberInput(e.target.value));
                       if (createError) setCreateError(null);
                     }}
-                    placeholder="請輸入工令編號"
+                    placeholder="請輸入 8~10 碼英數字（如：W622008A）"
                     className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   {createError && (
@@ -655,7 +631,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
           </div>
         )}
 
-        {/* 編輯工令彈出視窗（工令編號限制 8~10 碼英數） */}
+        {/* 編輯工令彈出視窗 */}
         {editingOrder && (
           <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-xl border border-slate-200 space-y-4">
@@ -683,7 +659,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                           : 'text-slate-400'
                       }`}
                     >
-                      {editWoNumber.length} / 10 碼 (限 8~10 碼)
+                      {editWoNumber.length} / 10 碼 (限 8~10 碼英數)
                     </span>
                   </div>
                   <input
@@ -696,7 +672,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                       setEditWoNumber(sanitizeWoNumberInput(e.target.value));
                       if (editError) setEditError(null);
                     }}
-                    placeholder="請輸入工令編號"
+                    placeholder="請輸入 8~10 碼英數字"
                     className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   {editError && (
@@ -801,7 +777,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                           : 'text-slate-400'
                       }`}
                     >
-                      {mergedWoNumber.length} / 10 碼 (限 8~10 碼)
+                      {mergedWoNumber.length} / 10 碼 (限 8~10 碼英數)
                     </span>
                   </div>
                   <input
@@ -814,7 +790,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                       setMergedWoNumber(sanitizeWoNumberInput(e.target.value));
                       if (mergeError) setMergeError(null);
                     }}
-                    placeholder="請輸入工令編號"
+                    placeholder="請輸入 8~10 碼英數字"
                     className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-purple-500"
                   />
                   {mergeError && (
