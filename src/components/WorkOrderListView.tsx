@@ -581,7 +581,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                           : 'text-slate-400'
                       }`}
                     >
-                      {woNumber.length} / 10 碼 (限 8~10 碼英數)
+                      {woNumber.length} / 10 碼 (限 8~10 碼)
                     </span>
                   </div>
                   <input
@@ -594,7 +594,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                       setWoNumber(sanitizeWoNumberInput(e.target.value));
                       if (createError) setCreateError(null);
                     }}
-                    placeholder="請輸入 8~10 碼英數字（如：W622008A）"
+                    placeholder="請輸入工令編號"
                     className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   {createError && (
@@ -683,7 +683,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                           : 'text-slate-400'
                       }`}
                     >
-                      {editWoNumber.length} / 10 碼 (限 8~10 碼英數)
+                      {editWoNumber.length} / 10 碼 (限 8~10 碼)
                     </span>
                   </div>
                   <input
@@ -696,7 +696,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                       setEditWoNumber(sanitizeWoNumberInput(e.target.value));
                       if (editError) setEditError(null);
                     }}
-                    placeholder="請輸入 8~10 碼英數字"
+                    placeholder="請輸入工令編號"
                     className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   {editError && (
@@ -801,7 +801,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                           : 'text-slate-400'
                       }`}
                     >
-                      {mergedWoNumber.length} / 10 碼 (限 8~10 碼英數)
+                      {mergedWoNumber.length} / 10 碼 (限 8~10 碼)
                     </span>
                   </div>
                   <input
@@ -814,7 +814,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                       setMergedWoNumber(sanitizeWoNumberInput(e.target.value));
                       if (mergeError) setMergeError(null);
                     }}
-                    placeholder="請輸入 8~10 碼英數字"
+                    placeholder="請輸入工令編號"
                     className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-purple-500"
                   />
                   {mergeError && (
