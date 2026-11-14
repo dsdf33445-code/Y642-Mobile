@@ -169,7 +169,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
       const cleanWo = sanitizeWoNumberInput(woNumber);
       if (!WORK_ORDER_NO_REGEX.test(cleanWo)) {
         setCreateError(
-          `工令編號須為 8 至 10 碼英文或數字（目前已輸入 ${cleanWo.length} 碼）`
+          `工令編號須為 8 或 10 碼英文及數字（目前已輸入 ${cleanWo.length} 碼）`
         );
         return;
       }
@@ -203,7 +203,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
       const cleanWo = sanitizeWoNumberInput(editWoNumber);
       if (!WORK_ORDER_NO_REGEX.test(cleanWo)) {
         setEditError(
-          `工令編號須為 8 至 10 碼英文或數字（目前已輸入 ${cleanWo.length} 碼）`
+          `工令編號須為 8 或 10 碼英文及數字（目前已輸入 ${cleanWo.length} 碼）`
         );
         return;
       }
@@ -243,7 +243,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
       const cleanWo = sanitizeWoNumberInput(mergedWoNumber);
       if (!WORK_ORDER_NO_REGEX.test(cleanWo)) {
         setMergeError(
-          `合併後工令編號須為 8 至 10 碼英文或數字（目前已輸入 ${cleanWo.length} 碼）`
+          `合併後工令編號須為 8 或 10 碼英文及數字（目前已輸入 ${cleanWo.length} 碼）`
         );
         return;
       }
@@ -570,7 +570,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                       setWoNumber(sanitizeWoNumberInput(e.target.value));
                       if (createError) setCreateError(null);
                     }}
-                    placeholder="請輸入 8~10 碼英數字（如：W622008A）"
+                    placeholder="請輸入 8 或 10 碼工令編號"
                     className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   {createError && (
@@ -672,7 +672,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                       setEditWoNumber(sanitizeWoNumberInput(e.target.value));
                       if (editError) setEditError(null);
                     }}
-                    placeholder="請輸入 8~10 碼英數字"
+                    placeholder="請輸入 8 或 10 碼工令編號"
                     className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   {editError && (
@@ -790,7 +790,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
                       setMergedWoNumber(sanitizeWoNumberInput(e.target.value));
                       if (mergeError) setMergeError(null);
                     }}
-                    placeholder="請輸入 8~10 碼英數字"
+                    placeholder="請輸入 8 或 10 碼工令編號"
                     className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-purple-500"
                   />
                   {mergeError && (
