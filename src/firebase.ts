@@ -9,7 +9,15 @@
 // ============================================================================
 
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import type { FirebaseApp } from 'firebase/app';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+} from 'firebase/auth';
+import type { Auth } from 'firebase/auth';
 import {
   getFirestore,
   collection,
@@ -23,6 +31,7 @@ import {
   where,
   serverTimestamp,
 } from 'firebase/firestore';
+import type { Firestore } from 'firebase/firestore';
 import type { WorkOrder, MoLineItem } from './types';
 import { STORAGE_KEYS, CONTRACT_DATABASES } from './constants';
 
@@ -37,11 +46,121 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
-// 初始化 Firebase App 與服務實例
-const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getFirestore(app);
-export const provider = new GoogleAuthProvider();
+export const isFirebaseConfigured = Boolean(
+  firebaseConfig.apiKey && firebaseConfig.projectId
+);
+
+// 初始化 Firebase App 與服務實例（未設定環境變數時進入本地快取模式，避免啟動失敗）
+let app: FirebaseApp | null = null;
+export let auth: Auth | null = null;
+export let db: Firestore | null = null;
+export let provider: GoogleAuthProvider | null = null;
+
+if (isFirebaseConfigured) {
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+  provider = new GoogleAuthProvider();
+} else {
+  console.warn(
+    '[Mobile-MO] Firebase 環境變數尚未設定，系統將以本地儲存 (localStorage) 模式運作。'
+  );
+}
+
+export interface AuthUserInfo {
+  uid: string;
+  displayName: string | null;
+  email: string | null;
+  photoURL: string | null;
+}
+
+const localAuthListeners = new Set<(user: AuthUserInfo | null) => void>();
+const localOrderListeners = new Map<string, Set<(orders: WorkOrder[]) => void>>();
+
+const readLocalAuthUser = (): AuthUserInfo | null => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      uid?: string;
+      displayName?: string;
+      email?: string;
+    };
+    if (!parsed?.uid) return null;
+    return {
+      uid: parsed.uid,
+      displayName: parsed.displayName || '本地測試使用者',
+      email: parsed.email || 'local@mobile-mo.local',
+      photoURL: null,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const notifyLocalAuthListeners = (user: AuthUserInfo | null) => {
+  localAuthListeners.forEach((cb) => cb(user));
+};
+
+const notifyLocalOrderListeners = (ownerId: string, orders: WorkOrder[]) => {
+  const listeners = localOrderListeners.get(ownerId);
+  if (!listeners) return;
+  listeners.forEach((cb) => cb(orders));
+};
+
+export const subscribeAuthState = (
+  onUserChanged: (user: AuthUserInfo | null) => void
+): (() => void) => {
+  if (auth) {
+    return onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser) {
+        onUserChanged({
+          uid: firebaseUser.uid,
+          displayName: firebaseUser.displayName,
+          email: firebaseUser.email,
+          photoURL: firebaseUser.photoURL,
+        });
+      } else {
+        onUserChanged(null);
+      }
+    });
+  }
+
+  localAuthListeners.add(onUserChanged);
+  onUserChanged(readLocalAuthUser());
+  return () => {
+    localAuthListeners.delete(onUserChanged);
+  };
+};
+
+export const signInWithGoogle = async (): Promise<void> => {
+  if (auth && provider) {
+    provider.setCustomParameters({ prompt: 'select_account' });
+    await signInWithPopup(auth, provider);
+    return;
+  }
+
+  const demoUser: AuthUserInfo = {
+    uid: 'local-demo-user',
+    displayName: '本地測試使用者',
+    email: 'local@mobile-mo.local',
+    photoURL: null,
+  };
+  localStorage.setItem(
+    STORAGE_KEYS.CURRENT_USER,
+    JSON.stringify({ uid: demoUser.uid, displayName: demoUser.displayName })
+  );
+  notifyLocalAuthListeners(demoUser);
+};
+
+export const signOutUser = async (): Promise<void> => {
+  localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+  if (auth) {
+    await signOut(auth);
+    return;
+  }
+  notifyLocalAuthListeners(null);
+};
 
 // 統一資料庫路徑常數 (artifacts/mobile-mo/users/{uid})
 const ARTIFACTS_COLLECTION = 'artifacts';
@@ -60,6 +179,7 @@ export const updateUserLoginProfile = async (user: {
   email: string | null;
   photoURL: string | null;
 }): Promise<void> => {
+  if (!db) return;
   try {
     const userDocRef = doc(
       db,
@@ -525,6 +645,7 @@ export const saveLocalWorkOrders = (
  * artifacts/mobile-mo/users/{uid}/workOrders 與 items，並刪除根目錄的舊文件
  */
 const migrateAndCleanRootWorkOrders = async (ownerId: string): Promise<void> => {
+  if (!db) return;
   try {
     const rootColRef = collection(db, WORK_ORDERS_SUBCOLLECTION);
     const rootSnap = await getDocs(
@@ -617,9 +738,24 @@ export const subscribeUserWorkOrders = (
   onUpdate: (orders: WorkOrder[]) => void
 ): (() => void) => {
   const cachedOrders = loadLocalWorkOrders(ownerId);
-  if (cachedOrders.length > 0) {
-    onUpdate(cachedOrders);
+  onUpdate(cachedOrders);
+
+  if (!db) {
+    const listeners = localOrderListeners.get(ownerId) || new Set();
+    listeners.add(onUpdate);
+    localOrderListeners.set(ownerId, listeners);
+    return () => {
+      const current = localOrderListeners.get(ownerId);
+      if (current) {
+        current.delete(onUpdate);
+        if (current.size === 0) {
+          localOrderListeners.delete(ownerId);
+        }
+      }
+    };
   }
+
+  const firestoreDb = db;
 
   // 啟動背景自動遷移與清除根目錄殘留的 workOrders
   void migrateAndCleanRootWorkOrders(ownerId);
@@ -775,7 +911,7 @@ export const subscribeUserWorkOrders = (
   const checkUserDocEmbeddedOrders = async () => {
     try {
       const userDocRef = doc(
-        db,
+        firestoreDb,
         ARTIFACTS_COLLECTION,
         APP_ARTIFACT_ID,
         USERS_COLLECTION,
@@ -809,7 +945,7 @@ export const subscribeUserWorkOrders = (
 
   // 監聽 1：artifacts/mobile-mo/users/{uid}/workOrders
   const userWorkOrdersColRef = collection(
-    db,
+    firestoreDb,
     ARTIFACTS_COLLECTION,
     APP_ARTIFACT_ID,
     USERS_COLLECTION,
@@ -839,7 +975,7 @@ export const subscribeUserWorkOrders = (
 
   // 監聽 2：artifacts/mobile-mo/users/{uid}/agreements
   const userAgreementsColRef = collection(
-    db,
+    firestoreDb,
     ARTIFACTS_COLLECTION,
     APP_ARTIFACT_ID,
     USERS_COLLECTION,
@@ -869,7 +1005,7 @@ export const subscribeUserWorkOrders = (
 
   // 監聽 3：artifacts/mobile-mo/users/{uid}/items
   const userItemsColRef = collection(
-    db,
+    firestoreDb,
     ARTIFACTS_COLLECTION,
     APP_ARTIFACT_ID,
     USERS_COLLECTION,
@@ -961,6 +1097,9 @@ export const saveUserWorkOrder = async (
     currentOrders.unshift(securedOrder);
   }
   saveLocalWorkOrders(ownerId, currentOrders);
+  notifyLocalOrderListeners(ownerId, currentOrders);
+
+  if (!db) return;
 
   // 2. 使用單一 WriteBatch 原子化更新 workOrders 主檔與 items 明細子集合
   const userWorkOrdersColRef = collection(
@@ -1044,6 +1183,9 @@ export const deleteUserWorkOrder = async (
   const currentOrders = loadLocalWorkOrders(ownerId);
   const nextOrders = currentOrders.filter((o) => o.id !== workOrderId);
   saveLocalWorkOrders(ownerId, nextOrders);
+  notifyLocalOrderListeners(ownerId, nextOrders);
+
+  if (!db) return;
 
   const userItemsColRef = collection(
     db,

@@ -8,7 +8,6 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { FC } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import {
   Wrench,
   UserCheck,
@@ -23,8 +22,9 @@ import {
   mergeMoLineItems,
 } from './constants';
 import {
-  auth,
-  provider,
+  subscribeAuthState,
+  signInWithGoogle,
+  signOutUser,
   subscribeUserWorkOrders,
   saveUserWorkOrder,
   deleteUserWorkOrder,
@@ -33,6 +33,8 @@ import {
 import { WorkOrderListView } from './components/WorkOrderListView';
 import { MoDetailView } from './components/MoDetailView';
 import { BottomNavigation } from './components/BottomNavigation';
+import { PWAInstallButton } from './components/PWAInstallButton';
+import { OfflineIndicator } from './components/OfflineIndicator';
 
 export const App: FC = () => {
   // 1. Google 登入使用者狀態
@@ -68,7 +70,7 @@ export const App: FC = () => {
 
   // 監聽 Firebase Google 登入狀態
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribeAuth = subscribeAuthState((firebaseUser) => {
       if (firebaseUser) {
         const profile: UserProfile = {
           uid: firebaseUser.uid,
@@ -91,6 +93,8 @@ export const App: FC = () => {
       } else {
         setCurrentUser(null);
         setCurrentUserEmail('');
+        setWorkOrders([]);
+        setSelectedOrderId(null);
         localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
       }
       setAuthInitializing(false);
@@ -102,8 +106,6 @@ export const App: FC = () => {
   // 訂閱該 Google 登入者專屬的工令與明細（對應 artifacts/mobile-mo/users/{uid}）
   useEffect(() => {
     if (!currentUser) {
-      setWorkOrders([]);
-      setSelectedOrderId(null);
       return;
     }
 
@@ -133,8 +135,7 @@ export const App: FC = () => {
   const handleGoogleLogin = async () => {
     setLoginError(null);
     try {
-      provider.setCustomParameters({ prompt: 'select_account' });
-      await signInWithPopup(auth, provider);
+      await signInWithGoogle();
     } catch (error) {
       console.error('Google 登入失敗：', error);
       setLoginError('Google 登入未完成，請確認網路連線或彈出視窗權限後重試。');
@@ -145,8 +146,7 @@ export const App: FC = () => {
   const handleLogout = async () => {
     setIsUserMenuOpen(false);
     try {
-      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
-      await signOut(auth);
+      await signOutUser();
       setCurrentUser(null);
       setCurrentUserEmail('');
       setWorkOrders([]);
@@ -316,12 +316,15 @@ export const App: FC = () => {
             <span>使用 Google 帳號登入</span>
           </button>
 
+          <PWAInstallButton />
+
           {loginError && (
             <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-left">
               {loginError}
             </div>
           )}
         </div>
+        <OfflineIndicator />
       </div>
     );
   }
@@ -345,46 +348,50 @@ export const App: FC = () => {
             </div>
           </div>
 
-          {/* 右上角登入人員按鈕與下拉登出選單 */}
-          <div className="relative" ref={userMenuRef}>
-            <button
-              type="button"
-              onClick={() => setIsUserMenuOpen((prev) => !prev)}
-              className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200/80 px-3 py-1.5 rounded-full text-xs font-medium text-slate-700 border border-slate-200 transition-colors cursor-pointer"
-            >
-              <UserCheck className="w-3.5 h-3.5 text-blue-600" />
-              <span>{currentUser.displayName}</span>
-              <ChevronDown
-                className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${
-                  isUserMenuOpen ? 'rotate-180' : ''
-                }`}
-              />
-            </button>
+          {/* 右上角安裝按鈕、登入人員按鈕與下拉登出選單 */}
+          <div className="flex items-center gap-2">
+            <PWAInstallButton compact />
 
-            {/* 點擊後展開的下拉選單 */}
-            {isUserMenuOpen && (
-              <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-1.5 z-50">
-                {currentUserEmail && (
-                  <div className="px-3.5 py-2 border-b border-slate-100">
-                    <div className="text-xs font-bold text-slate-800 truncate">
-                      {currentUser.displayName}
-                    </div>
-                    <div className="text-[11px] text-slate-400 truncate">
-                      {currentUserEmail}
-                    </div>
-                  </div>
-                )}
+            <div className="relative" ref={userMenuRef}>
+              <button
+                type="button"
+                onClick={() => setIsUserMenuOpen((prev) => !prev)}
+                className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200/80 px-3 py-1.5 rounded-full text-xs font-medium text-slate-700 border border-slate-200 transition-colors cursor-pointer"
+              >
+                <UserCheck className="w-3.5 h-3.5 text-blue-600" />
+                <span>{currentUser.displayName}</span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${
+                    isUserMenuOpen ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
 
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  className="w-full px-3.5 py-2 text-left text-xs font-semibold text-red-600 hover:bg-red-50 flex items-center gap-2 transition-colors cursor-pointer"
-                >
-                  <LogOut className="w-4 h-4" />
-                  <span>登出</span>
-                </button>
-              </div>
-            )}
+              {/* 點擊後展開的下拉選單 */}
+              {isUserMenuOpen && (
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-1.5 z-50">
+                  {currentUserEmail && (
+                    <div className="px-3.5 py-2 border-b border-slate-100">
+                      <div className="text-xs font-bold text-slate-800 truncate">
+                        {currentUser.displayName}
+                      </div>
+                      <div className="text-[11px] text-slate-400 truncate">
+                        {currentUserEmail}
+                      </div>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="w-full px-3.5 py-2 text-left text-xs font-semibold text-red-600 hover:bg-red-50 flex items-center gap-2 transition-colors cursor-pointer"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span>登出</span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </header>
@@ -420,6 +427,9 @@ export const App: FC = () => {
         onTabChange={setActiveTab}
         currentMoCount={selectedWorkOrder?.items.length || 0}
       />
+
+      {/* 離線狀態提示 */}
+      <OfflineIndicator />
     </div>
   );
 };
