@@ -492,7 +492,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                 資料來源：{resolvedSourceUrl || activeContract?.githubExcelUrl}
               </span>
               <span className="font-semibold text-blue-700">
-                已載入 {catalogItems.length} 筆合約工項
+                已載入 {catalogItems.length} 筆合約項目
               </span>
             </div>
 
