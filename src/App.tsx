@@ -300,7 +300,7 @@ export const App: FC = () => {
 
           <div className="space-y-1">
             <h1 className="text-lg font-extrabold text-slate-800">
-              工令管理系統 (Mobile-MO)
+              工令管理系統
             </h1>
             <p className="text-xs text-slate-500">
               請使用您的 Google 帳號登入以載入個人工令資料庫
