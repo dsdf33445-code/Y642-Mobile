@@ -1,10 +1,10 @@
 // src/components/MoDetailView.tsx
 // ============================================================================
 // 工令明細 (MO 明細) 視圖組件
-// 本次修復重點：
-// 1. 徹底解除已選入工令之 MO 明細 999 數量上限，全面升級為 1 ~ 99999
-// 2. 抽離獨立數量輸入組件 MoLineQuantityControl，支援順暢輸入 4~5 位數 (如 1500、99999)，
-//    於按下 Enter、失去焦點 (onBlur) 或點擊 +/- 按鈕時寫入 Firestore，避免打字中途被雲端快照覆蓋
+// 本次更新重點：
+// 1. 數量支援輸入「小數點後 1 位」（範圍 0.1 ~ 99999），自動過濾多餘小數點與第二位小數
+// 2. 將輸入框切換為 inputMode="decimal"，手機版鍵盤可直接點選小數點「.」
+// 3. 解決 JavaScript 浮點數運算誤差（如 0.1 + 0.2），確保顯示與小計精準無誤
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback, memo } from 'react';
@@ -59,22 +59,42 @@ interface MoDetailViewProps {
 const contractProductsCache = new Map<string, ContractProductItem[]>();
 
 /**
- * 工令明細數量上下限常數（最低 1，最高 99999）
+ * 工令明細數量上下限常數（最低 0.1，最高 99999，支援小數點後 1 位）
  */
-const MIN_ITEM_QTY = 1;
+const MIN_ITEM_QTY = 0.1;
 const MAX_ITEM_QTY = 99999;
 
 /**
- * 將數量嚴格限制在 1 ~ 99999 整數之間
+ * 將數量限制在 0.1 ~ 99999 之間，並精確保留至小數點後 1 位
  */
 const clampQuantity = (val: number): number => {
-  if (!Number.isFinite(val)) return MIN_ITEM_QTY;
-  return Math.min(MAX_ITEM_QTY, Math.max(MIN_ITEM_QTY, Math.round(val)));
+  if (!Number.isFinite(val)) return 1;
+  const roundedOneDecimal = Math.round(val * 10) / 10;
+  return Math.min(MAX_ITEM_QTY, Math.max(MIN_ITEM_QTY, roundedOneDecimal));
 };
 
 /**
- * 獨立的已選入明細數量控制器組件
- * 解決直接鍵入 4~5 位數 (如 1000 ~ 99999) 時，不會因為每打一個字就寫入資料庫而產生游標跳動
+ * 清理並格式化小數點後 1 位輸入字串
+ * - 允許整數部分最多 5 碼 (99999)
+ * - 允許最多 1 個小數點，且小數點後方最多 1 位數字
+ * - 若使用者正在輸入例如 "12."，允許暫時保留尾端小數點以便繼續輸入下一位數字
+ */
+const sanitizeDecimalQtyInput = (raw: string): string => {
+  const cleaned = raw.replace(/。/g, '.').replace(/[^0-9.]/g, '');
+  const dotIndex = cleaned.indexOf('.');
+  if (dotIndex === -1) {
+    return cleaned.slice(0, 5);
+  }
+  const intPart = cleaned.slice(0, dotIndex).slice(0, 5);
+  const decPart = cleaned
+    .slice(dotIndex + 1)
+    .replace(/\./g, '')
+    .slice(0, 1);
+  return `${intPart || '0'}.${decPart}`;
+};
+
+/**
+ * 獨立的已選入明細數量控制器組件（支援小數點後 1 位與 5 位數整數）
  */
 interface MoLineQuantityControlProps {
   itemId: string;
@@ -85,7 +105,7 @@ interface MoLineQuantityControlProps {
 
 const MoLineQuantityControl: FC<MoLineQuantityControlProps> = memo(
   ({ itemId, itemName, quantity, onCommitQuantity }) => {
-    // 本地輸入字串狀態，允許使用者暫時清空後重新輸入任意 1 ~ 99999 數字
+    // 本地輸入字串狀態，允許使用者自由鍵入含小數點後 1 位的數字
     const [draftQty, setDraftQty] = useState<string>(String(quantity));
 
     // 當外部數量（例如點擊 +/- 按鈕或雲端更新）變更時同步更新顯示
@@ -93,12 +113,10 @@ const MoLineQuantityControl: FC<MoLineQuantityControlProps> = memo(
       setDraftQty(String(quantity));
     }, [quantity]);
 
-    // 提交驗證後的最終數量
+    // 提交驗證後的最終數量（保留小數點後 1 位）
     const commitDraftValue = useCallback(() => {
-      const parsed = parseInt(draftQty, 10);
-      const clamped = Number.isNaN(parsed)
-        ? MIN_ITEM_QTY
-        : clampQuantity(parsed);
+      const parsed = parseFloat(draftQty);
+      const clamped = Number.isNaN(parsed) ? 1 : clampQuantity(parsed);
       setDraftQty(String(clamped));
       if (clamped !== quantity) {
         onCommitQuantity(itemId, clamped);
@@ -119,16 +137,13 @@ const MoLineQuantityControl: FC<MoLineQuantityControlProps> = memo(
 
         <input
           type="text"
-          inputMode="numeric"
-          pattern="[0-9]*"
+          inputMode="decimal"
           aria-label={`${itemName} 數量`}
-          maxLength={5}
+          maxLength={7}
           value={draftQty}
           onFocus={(e) => e.target.select()}
           onChange={(e) => {
-            // 僅允許輸入數字，最多 5 碼 (1 ~ 99999)
-            const digitsOnly = e.target.value.replace(/[^0-9]/g, '').slice(0, 5);
-            setDraftQty(digitsOnly);
+            setDraftQty(sanitizeDecimalQtyInput(e.target.value));
           }}
           onBlur={commitDraftValue}
           onKeyDown={(e) => {
@@ -198,13 +213,14 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       return sortMoItemsByCode(workOrder.items);
     }, [workOrder]);
 
-    // 建立已加入項目的數量對照表
+    // 建立已加入項目的數量對照表（修正小數點相加的浮點數精度）
     const addedQtyMap = useMemo(() => {
       const map = new Map<string, number>();
       if (!workOrder) return map;
       workOrder.items.forEach((item) => {
         const key = `${item.code}__${item.name}`;
-        map.set(key, (map.get(key) || 0) + item.quantity);
+        const nextSum = Math.round(((map.get(key) || 0) + item.quantity) * 10) / 10;
+        map.set(key, nextSum);
       });
       return map;
     }, [workOrder]);
@@ -366,7 +382,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       }
     };
 
-    // 輸入完數量後，點擊「加入」按鈕將指定數量帶入 MO 明細（最高限制 99999，並自動按編號排序）
+    // 輸入完數量後，點擊「加入」按鈕將指定數量帶入 MO 明細（支援小數點後 1 位，上限 99999）
     const handleAddFromCatalog = (
       product: ContractProductItem,
       qtyToAdd: number
@@ -418,7 +434,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       setDeletingItem(null);
     };
 
-    // 修改既有 MO 明細的數量（限制最低 1、最高 99999）
+    // 修改既有 MO 明細的數量（支援小數點後 1 位，最低 0.1、最高 99999）
     const handleQuantityChange = useCallback(
       (itemId: string, rawQty: number) => {
         if (!workOrder) return;
@@ -607,7 +623,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
           </div>
         </div>
 
-        {/* 已選入此工令的 MO 明細清單（數量上限 99999） */}
+        {/* 已選入此工令的 MO 明細清單（支援小數點後 1 位，上限 99999） */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
@@ -615,7 +631,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
               <span>已選入工令之 MO 明細 ({sortedOrderItems.length})</span>
             </h3>
             <span className="text-[11px] text-slate-400">
-              數量上限：99,999
+              可輸入小數點後 1 位（上限 99,999）
             </span>
           </div>
 
@@ -661,7 +677,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                     </div>
                   </div>
 
-                  {/* 數量控制器（最低 1，最高 99999）與刪除按鈕 */}
+                  {/* 數量控制器（支援小數點後 1 位，最低 0.1，最高 99999）與刪除按鈕 */}
                   <div className="flex items-center justify-between sm:justify-end gap-2.5">
                     <MoLineQuantityControl
                       itemId={item.id}
@@ -717,7 +733,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                     新增項目
                   </h3>
                   <p className="text-[11px] text-slate-500">
-                    點擊項目列即可輸入數量（1~99999）並加入明細（共 {catalogItems.length} 筆工項）
+                    點擊項目列即可輸入數量（支援小數點後 1 位，上限 99999）並加入明細
                   </p>
                 </div>
                 <button
@@ -802,9 +818,10 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                     const isSelectedRow = selectedCatalogKey === rowKey;
                     const addedQty =
                       addedQtyMap.get(`${prod.code}__${prod.name}`) || 0;
-                    const parsedPendingQty = clampQuantity(
-                      parseInt(pendingAddQty, 10) || MIN_ITEM_QTY
-                    );
+                    const rawParsedPending = parseFloat(pendingAddQty);
+                    const parsedPendingQty = Number.isNaN(rawParsedPending)
+                      ? 1
+                      : clampQuantity(rawParsedPending);
 
                     return (
                       <div
@@ -851,7 +868,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                           )}
                         </div>
 
-                        {/* 點擊項目列後展開：數量輸入框與「加入」按鈕 */}
+                        {/* 點擊項目列後展開：小數點後 1 位數量輸入框與「加入」按鈕 */}
                         {isSelectedRow && (
                           <div
                             onClick={(e) => e.stopPropagation()}
@@ -879,26 +896,16 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                                 </button>
                                 <input
                                   type="text"
-                                  inputMode="numeric"
-                                  pattern="[0-9]*"
+                                  inputMode="decimal"
                                   aria-label="輸入加入數量"
-                                  maxLength={5}
+                                  maxLength={7}
                                   autoFocus
                                   value={pendingAddQty}
                                   onFocus={(e) => e.target.select()}
                                   onChange={(e) => {
-                                    const raw = e.target.value
-                                      .replace(/[^0-9]/g, '')
-                                      .slice(0, 5);
-                                    if (raw === '') {
-                                      setPendingAddQty('');
-                                      return;
-                                    }
-                                    const num = Math.min(
-                                      MAX_ITEM_QTY,
-                                      Math.max(MIN_ITEM_QTY, parseInt(raw, 10))
+                                    setPendingAddQty(
+                                      sanitizeDecimalQtyInput(e.target.value)
                                     );
-                                    setPendingAddQty(String(num));
                                   }}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter') {
