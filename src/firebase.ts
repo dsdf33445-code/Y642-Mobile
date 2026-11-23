@@ -1,12 +1,21 @@
 // src/firebase.ts
 // ============================================================================
-// Firebase 核心設定與統一資料庫路徑模組
-// 本次修復重點：將 normalizeLegacyMoItem 的明細數量上限由 999 提升至 99999，
-// 確保超過 999 的數量寫入 Firestore 時不會被自動截斷
+// Firebase 核心設定、Google 身分驗證封裝與統一資料庫路徑模組
+// 本次修復重點：
+// 1. 補齊並匯出 subscribeAuthState、signInWithGoogle、signOutUser 三個驗證函式，
+//    解決 src/App.tsx 的 TS2305 與 TS7006 編譯錯誤
+// 2. 維持統一資料庫路徑 artifacts/mobile-mo/users/{uid} 與明細數量上限 99999
 // ============================================================================
 
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+} from 'firebase/auth';
+import type { User, UserCredential } from 'firebase/auth';
 import {
   getFirestore,
   collection,
@@ -34,13 +43,45 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
-// 初始化 Firebase App 與服務實例
+// 初始化 Firebase App 與各項核心服務實例
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const provider = new GoogleAuthProvider();
 
-// 統一資料庫路徑常數 (artifacts/mobile-mo/users/{uid})
+// ============================================================================
+// Google 身分驗證封裝函式（供 src/App.tsx 直接呼叫）
+// ============================================================================
+
+/**
+ * 監聽 Firebase Auth 登入狀態變更
+ * 明確標註 User | null 型別，讓呼叫端回呼參數自動具備完整型別推斷
+ */
+export const subscribeAuthState = (
+  callback: (user: User | null) => void
+): (() => void) => {
+  return onAuthStateChanged(auth, callback);
+};
+
+/**
+ * 觸發 Google 帳號彈出視窗登入（強制顯示帳號選擇器方便切換帳號）
+ */
+export const signInWithGoogle = async (): Promise<UserCredential> => {
+  provider.setCustomParameters({ prompt: 'select_account' });
+  return await signInWithPopup(auth, provider);
+};
+
+/**
+ * 登出目前登入的 Google 帳號
+ */
+export const signOutUser = async (): Promise<void> => {
+  await signOut(auth);
+};
+
+// ============================================================================
+// Firestore 統一資料庫路徑與工令讀寫模組 (artifacts/mobile-mo/users/{uid})
+// ============================================================================
+
 const ARTIFACTS_COLLECTION = 'artifacts';
 const APP_ARTIFACT_ID = 'mobile-mo';
 const USERS_COLLECTION = 'users';
