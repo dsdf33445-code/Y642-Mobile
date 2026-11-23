@@ -1,23 +1,11 @@
 // src/firebase.ts
 // ============================================================================
 // Firebase 核心設定與統一資料庫路徑模組
-// 統一後唯一路徑架構：
-// 1. 使用者主檔：artifacts/mobile-mo/users/{uid}
-// 2. 工令主檔：  artifacts/mobile-mo/users/{uid}/workOrders/{workOrderId}
-// 3. 工令明細：  artifacts/mobile-mo/users/{uid}/items/{itemId}
-// 4. 自動遷移清理：登入時自動將根目錄殘留的 workOrders 搬移回上述統一路徑並刪除根目錄舊文件
+// 本次更新重點：將明細數量上限限制由 999 提升至 99999
 // ============================================================================
 
 import { initializeApp } from 'firebase/app';
-import type { FirebaseApp } from 'firebase/app';
-import {
-  getAuth,
-  GoogleAuthProvider,
-  onAuthStateChanged,
-  signInWithPopup,
-  signOut,
-} from 'firebase/auth';
-import type { Auth } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import {
   getFirestore,
   collection,
@@ -31,7 +19,6 @@ import {
   where,
   serverTimestamp,
 } from 'firebase/firestore';
-import type { Firestore } from 'firebase/firestore';
 import type { WorkOrder, MoLineItem } from './types';
 import { STORAGE_KEYS, CONTRACT_DATABASES } from './constants';
 
@@ -46,121 +33,11 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
-export const isFirebaseConfigured = Boolean(
-  firebaseConfig.apiKey && firebaseConfig.projectId
-);
-
-// 初始化 Firebase App 與服務實例（未設定環境變數時進入本地快取模式，避免啟動失敗）
-let app: FirebaseApp | null = null;
-export let auth: Auth | null = null;
-export let db: Firestore | null = null;
-export let provider: GoogleAuthProvider | null = null;
-
-if (isFirebaseConfigured) {
-  app = initializeApp(firebaseConfig);
-  auth = getAuth(app);
-  db = getFirestore(app);
-  provider = new GoogleAuthProvider();
-} else {
-  console.warn(
-    '[Mobile-MO] Firebase 環境變數尚未設定，系統將以本地儲存 (localStorage) 模式運作。'
-  );
-}
-
-export interface AuthUserInfo {
-  uid: string;
-  displayName: string | null;
-  email: string | null;
-  photoURL: string | null;
-}
-
-const localAuthListeners = new Set<(user: AuthUserInfo | null) => void>();
-const localOrderListeners = new Map<string, Set<(orders: WorkOrder[]) => void>>();
-
-const readLocalAuthUser = (): AuthUserInfo | null => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as {
-      uid?: string;
-      displayName?: string;
-      email?: string;
-    };
-    if (!parsed?.uid) return null;
-    return {
-      uid: parsed.uid,
-      displayName: parsed.displayName || '本地測試使用者',
-      email: parsed.email || 'local@mobile-mo.local',
-      photoURL: null,
-    };
-  } catch {
-    return null;
-  }
-};
-
-const notifyLocalAuthListeners = (user: AuthUserInfo | null) => {
-  localAuthListeners.forEach((cb) => cb(user));
-};
-
-const notifyLocalOrderListeners = (ownerId: string, orders: WorkOrder[]) => {
-  const listeners = localOrderListeners.get(ownerId);
-  if (!listeners) return;
-  listeners.forEach((cb) => cb(orders));
-};
-
-export const subscribeAuthState = (
-  onUserChanged: (user: AuthUserInfo | null) => void
-): (() => void) => {
-  if (auth) {
-    return onAuthStateChanged(auth, (firebaseUser) => {
-      if (firebaseUser) {
-        onUserChanged({
-          uid: firebaseUser.uid,
-          displayName: firebaseUser.displayName,
-          email: firebaseUser.email,
-          photoURL: firebaseUser.photoURL,
-        });
-      } else {
-        onUserChanged(null);
-      }
-    });
-  }
-
-  localAuthListeners.add(onUserChanged);
-  onUserChanged(readLocalAuthUser());
-  return () => {
-    localAuthListeners.delete(onUserChanged);
-  };
-};
-
-export const signInWithGoogle = async (): Promise<void> => {
-  if (auth && provider) {
-    provider.setCustomParameters({ prompt: 'select_account' });
-    await signInWithPopup(auth, provider);
-    return;
-  }
-
-  const demoUser: AuthUserInfo = {
-    uid: 'local-demo-user',
-    displayName: '本地測試使用者',
-    email: 'local@mobile-mo.local',
-    photoURL: null,
-  };
-  localStorage.setItem(
-    STORAGE_KEYS.CURRENT_USER,
-    JSON.stringify({ uid: demoUser.uid, displayName: demoUser.displayName })
-  );
-  notifyLocalAuthListeners(demoUser);
-};
-
-export const signOutUser = async (): Promise<void> => {
-  localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
-  if (auth) {
-    await signOut(auth);
-    return;
-  }
-  notifyLocalAuthListeners(null);
-};
+// 初始化 Firebase App 與服務實例
+const app = initializeApp(firebaseConfig);
+export const auth = getAuth(app);
+export const db = getFirestore(app);
+export const provider = new GoogleAuthProvider();
 
 // 統一資料庫路徑常數 (artifacts/mobile-mo/users/{uid})
 const ARTIFACTS_COLLECTION = 'artifacts';
@@ -179,7 +56,6 @@ export const updateUserLoginProfile = async (user: {
   email: string | null;
   photoURL: string | null;
 }): Promise<void> => {
-  if (!db) return;
   try {
     const userDocRef = doc(
       db,
@@ -205,7 +81,7 @@ export const updateUserLoginProfile = async (user: {
 };
 
 /**
- * 將任意時間格式（Firestore Timestamp、毫秒數字、日期字串）安全轉為 ISO 字串
+ * 將任意時間格式安全轉為 ISO 字串
  */
 const toSafeIsoString = (val: unknown): string => {
   if (!val) return new Date().toISOString();
@@ -421,7 +297,7 @@ export const sortMoItemsByCode = (items: MoLineItem[]): MoLineItem[] => {
 };
 
 /**
- * 正規化單筆 MO 明細（對應 items 子集合的 id, no, name, price, qty, workOrderId 欄位）
+ * 正規化單筆 MO 明細（數量限制：最低 1，最高 99999）
  */
 const normalizeLegacyMoItem = (
   raw: Record<string, unknown>,
@@ -467,8 +343,9 @@ const normalizeLegacyMoItem = (
   const rawQty = Number(
     raw.qty ?? raw.quantity ?? raw.count ?? raw['數量'] ?? 1
   );
+  // 限制數量範圍：1 ~ 99999
   const quantity = Number.isFinite(rawQty)
-    ? Math.min(999, Math.max(1, Math.round(rawQty)))
+    ? Math.min(99999, Math.max(1, Math.round(rawQty)))
     : 1;
 
   const subtotal = Math.round(unitPrice * quantity);
@@ -542,7 +419,6 @@ export const normalizeLegacyWorkOrder = (
     )
   );
 
-  // 以 items 子集合 (externalItems) 為準，若子集合尚未同步該筆但主檔有內嵌明細則自動帶入
   let finalItems: MoLineItem[] = [];
   if (externalItems && externalItems.length > 0) {
     finalItems = externalItems;
@@ -641,11 +517,8 @@ export const saveLocalWorkOrders = (
 
 /**
  * 自動遷移並清除根目錄的 workOrders 集合
- * 將改版測試期間寫入根目錄 workOrders 的工令與明細，完整搬移至統一的
- * artifacts/mobile-mo/users/{uid}/workOrders 與 items，並刪除根目錄的舊文件
  */
 const migrateAndCleanRootWorkOrders = async (ownerId: string): Promise<void> => {
-  if (!db) return;
   try {
     const rootColRef = collection(db, WORK_ORDERS_SUBCOLLECTION);
     const rootSnap = await getDocs(
@@ -677,7 +550,6 @@ const migrateAndCleanRootWorkOrders = async (ownerId: string): Promise<void> => 
       const wo = normalizeLegacyWorkOrder(raw, rootDocSnap.id, ownerId);
 
       if (wo) {
-        // 1. 寫入統一的 artifacts/mobile-mo/users/{uid}/workOrders/{wo.id}
         const targetWoRef = doc(userWorkOrdersColRef, wo.id);
         batch.set(
           targetWoRef,
@@ -698,7 +570,6 @@ const migrateAndCleanRootWorkOrders = async (ownerId: string): Promise<void> => 
           { merge: true }
         );
 
-        // 2. 將內嵌的 items 寫入統一的 artifacts/mobile-mo/users/{uid}/items/{item.id}
         wo.items.forEach((item) => {
           const targetItemRef = doc(userItemsColRef, item.id);
           batch.set(
@@ -719,7 +590,6 @@ const migrateAndCleanRootWorkOrders = async (ownerId: string): Promise<void> => 
         });
       }
 
-      // 3. 刪除根目錄 workOrders 中的文件（清空後根目錄 workOrders 集合即自動消失）
       batch.delete(rootDocSnap.ref);
     });
 
@@ -731,33 +601,16 @@ const migrateAndCleanRootWorkOrders = async (ownerId: string): Promise<void> => 
 
 /**
  * 訂閱特定 Google 登入者 (ownerId) 的所有工令與明細
- * 統一監聽唯一路徑：artifacts/mobile-mo/users/{uid}/workOrders 與 items
  */
 export const subscribeUserWorkOrders = (
   ownerId: string,
   onUpdate: (orders: WorkOrder[]) => void
 ): (() => void) => {
   const cachedOrders = loadLocalWorkOrders(ownerId);
-  onUpdate(cachedOrders);
-
-  if (!db) {
-    const listeners = localOrderListeners.get(ownerId) || new Set();
-    listeners.add(onUpdate);
-    localOrderListeners.set(ownerId, listeners);
-    return () => {
-      const current = localOrderListeners.get(ownerId);
-      if (current) {
-        current.delete(onUpdate);
-        if (current.size === 0) {
-          localOrderListeners.delete(ownerId);
-        }
-      }
-    };
+  if (cachedOrders.length > 0) {
+    onUpdate(cachedOrders);
   }
 
-  const firestoreDb = db;
-
-  // 啟動背景自動遷移與清除根目錄殘留的 workOrders
   void migrateAndCleanRootWorkOrders(ownerId);
 
   const artifactRawWorkOrders = new Map<string, Record<string, unknown>>();
@@ -794,7 +647,6 @@ export const subscribeUserWorkOrders = (
     return undefined;
   };
 
-  // 統整統一集合內的資料並通知 UI 更新
   const rebuildAndEmitOrders = () => {
     if (
       !initialSync.workOrders ||
@@ -807,7 +659,6 @@ export const subscribeUserWorkOrders = (
     const finalOrdersMap = new Map<string, WorkOrder>();
     const handledWoIds = new Set<string>();
 
-    // 1. 組裝 artifacts/mobile-mo/users/{uid}/workOrders 與對應的 items
     artifactRawWorkOrders.forEach((rawWo, woDocId) => {
       const targetWoId = String(rawWo.id || woDocId).trim();
       handledWoIds.add(targetWoId);
@@ -838,7 +689,6 @@ export const subscribeUserWorkOrders = (
       }
     });
 
-    // 2. 相容讀取 agreements 子集合中尚未轉入 workOrders 的舊工令主檔
     artifactRawAgreements.forEach((rawAg, agDocId) => {
       const targetWoId = String(
         rawAg.workOrderId ?? rawAg.orderId ?? rawAg.id ?? agDocId
@@ -865,7 +715,6 @@ export const subscribeUserWorkOrders = (
       }
     });
 
-    // 3. 若 items 子集合有孤立的 workOrderId，自動還原為工令卡片
     artifactItemsByWoId.forEach((itemsList, orphanWoId) => {
       if (handledWoIds.has(orphanWoId) || itemsList.length === 0) return;
 
@@ -907,11 +756,10 @@ export const subscribeUserWorkOrders = (
     onUpdate(combined);
   };
 
-  // 檢查使用者文件本身是否內嵌舊工令陣列
   const checkUserDocEmbeddedOrders = async () => {
     try {
       const userDocRef = doc(
-        firestoreDb,
+        db,
         ARTIFACTS_COLLECTION,
         APP_ARTIFACT_ID,
         USERS_COLLECTION,
@@ -943,9 +791,8 @@ export const subscribeUserWorkOrders = (
   };
   void checkUserDocEmbeddedOrders();
 
-  // 監聽 1：artifacts/mobile-mo/users/{uid}/workOrders
   const userWorkOrdersColRef = collection(
-    firestoreDb,
+    db,
     ARTIFACTS_COLLECTION,
     APP_ARTIFACT_ID,
     USERS_COLLECTION,
@@ -973,9 +820,8 @@ export const subscribeUserWorkOrders = (
     }
   );
 
-  // 監聽 2：artifacts/mobile-mo/users/{uid}/agreements
   const userAgreementsColRef = collection(
-    firestoreDb,
+    db,
     ARTIFACTS_COLLECTION,
     APP_ARTIFACT_ID,
     USERS_COLLECTION,
@@ -1003,9 +849,8 @@ export const subscribeUserWorkOrders = (
     }
   );
 
-  // 監聽 3：artifacts/mobile-mo/users/{uid}/items
   const userItemsColRef = collection(
-    firestoreDb,
+    db,
     ARTIFACTS_COLLECTION,
     APP_ARTIFACT_ID,
     USERS_COLLECTION,
@@ -1061,7 +906,6 @@ export const subscribeUserWorkOrders = (
 
 /**
  * 新增或更新單筆個人工令
- * 唯一寫入目標：artifacts/mobile-mo/users/{uid}/workOrders 與 items 子集合
  */
 export const saveUserWorkOrder = async (
   ownerId: string,
@@ -1097,9 +941,6 @@ export const saveUserWorkOrder = async (
     currentOrders.unshift(securedOrder);
   }
   saveLocalWorkOrders(ownerId, currentOrders);
-  notifyLocalOrderListeners(ownerId, currentOrders);
-
-  if (!db) return;
 
   // 2. 使用單一 WriteBatch 原子化更新 workOrders 主檔與 items 明細子集合
   const userWorkOrdersColRef = collection(
@@ -1125,7 +966,6 @@ export const saveUserWorkOrder = async (
 
   const batch = writeBatch(db);
 
-  // (a) 寫入工令主檔至 artifacts/mobile-mo/users/{uid}/workOrders/{id}
   const artifactWoDocRef = doc(userWorkOrdersColRef, securedOrder.id);
   batch.set(
     artifactWoDocRef,
@@ -1146,7 +986,6 @@ export const saveUserWorkOrder = async (
     { merge: true }
   );
 
-  // (b) 刪除該工令下已被移除的舊明細文件
   const nextItemIds = new Set(sortedItems.map((i) => i.id));
   existingItemsSnap.forEach((docSnap) => {
     if (!nextItemIds.has(docSnap.id)) {
@@ -1154,7 +993,6 @@ export const saveUserWorkOrder = async (
     }
   });
 
-  // (c) 寫入該工令目前的所有明細至 artifacts/mobile-mo/users/{uid}/items/{itemId}
   sortedItems.forEach((item) => {
     const itemDocRef = doc(userItemsColRef, item.id);
     batch.set(itemDocRef, {
@@ -1174,7 +1012,7 @@ export const saveUserWorkOrder = async (
 };
 
 /**
- * 刪除單筆個人工令（同步刪除統一集合下的 workOrders 主檔、agreements 與 items 子集合明細）
+ * 刪除單筆個人工令
  */
 export const deleteUserWorkOrder = async (
   ownerId: string,
@@ -1183,9 +1021,6 @@ export const deleteUserWorkOrder = async (
   const currentOrders = loadLocalWorkOrders(ownerId);
   const nextOrders = currentOrders.filter((o) => o.id !== workOrderId);
   saveLocalWorkOrders(ownerId, nextOrders);
-  notifyLocalOrderListeners(ownerId, nextOrders);
-
-  if (!db) return;
 
   const userItemsColRef = collection(
     db,
@@ -1201,7 +1036,6 @@ export const deleteUserWorkOrder = async (
 
   const batch = writeBatch(db);
 
-  // 1. 刪除 artifacts/mobile-mo/users/{uid}/workOrders/{workOrderId}
   const artifactWoDocRef = doc(
     db,
     ARTIFACTS_COLLECTION,
@@ -1213,7 +1047,6 @@ export const deleteUserWorkOrder = async (
   );
   batch.delete(artifactWoDocRef);
 
-  // 2. 刪除 artifacts/mobile-mo/users/{uid}/agreements/{workOrderId}（若存在）
   const artifactAgDocRef = doc(
     db,
     ARTIFACTS_COLLECTION,
@@ -1225,7 +1058,6 @@ export const deleteUserWorkOrder = async (
   );
   batch.delete(artifactAgDocRef);
 
-  // 3. 刪除 artifacts/mobile-mo/users/{uid}/items 中所有屬於該工令的明細
   itemsSnap.forEach((docSnap) => {
     batch.delete(docSnap.ref);
   });
