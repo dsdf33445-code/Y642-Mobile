@@ -3,7 +3,7 @@
 // 工令明細 (MO 明細) 視圖組件
 // 本次更新重點：
 // 1. 新增項目視窗中，移除原本直接 +1 的「+ 加入」按鈕
-// 2. 改為「點擊項目列」後，於該列展開「數量輸入框 (1~999)」與「加入按鈕」
+// 2. 改為「點擊項目列」後，於該列展開「數量輸入框 (1~99999)」與「加入按鈕」
 // 3. 輸入完數量並點擊「加入」按鈕（或按 Enter 鍵）後，才正式將該項目與數量加入明細
 // ============================================================================
 
@@ -59,11 +59,11 @@ interface MoDetailViewProps {
 const contractProductsCache = new Map<string, ContractProductItem[]>();
 
 /**
- * 將數量嚴格限制在 1 ~ 999 整數之間
+ * 將數量嚴格限制在 1 ~ 99999 整數之間
  */
 const clampQuantity = (val: number): number => {
   if (!Number.isFinite(val)) return 1;
-  return Math.min(999, Math.max(1, Math.round(val)));
+  return Math.min(99999, Math.max(1, Math.round(val)));
 };
 
 export const MoDetailView: FC<MoDetailViewProps> = memo(
@@ -277,7 +277,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       }
     };
 
-    // 輸入完數量後，點擊「加入」按鈕將指定數量帶入 MO 明細（最高限制 999，並自動按編號排序）
+    // 輸入完數量後，點擊「加入」按鈕將指定數量帶入 MO 明細（最高限制 99999，並自動按編號排序）
     const handleAddFromCatalog = (
       product: ContractProductItem,
       qtyToAdd: number
@@ -330,7 +330,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       setDeletingItem(null);
     };
 
-    // 修改既有 MO 明細的數量（限制最低 1、最高 999）
+    // 修改既有 MO 明細的數量（限制最低 1、最高 99999）
     const handleQuantityChange = (itemId: string, rawQty: number) => {
       if (!workOrder) return;
       const safeQty = clampQuantity(rawQty);
@@ -561,7 +561,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                     </div>
                   </div>
 
-                  {/* 數量控制器（最低 1，最高 999）與刪除按鈕 */}
+                  {/* 數量控制器（最低 1，最高 99999）與刪除按鈕 */}
                   <div className="flex items-center justify-between sm:justify-end gap-3">
                     <div className="flex items-center border border-slate-200 rounded-lg bg-slate-50">
                       <button
@@ -577,7 +577,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                       <input
                         type="number"
                         min={1}
-                        max={999}
+                        max={99999}
                         step={1}
                         value={item.quantity}
                         onChange={(e) => {
@@ -599,7 +599,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                       />
                       <button
                         type="button"
-                        disabled={item.quantity >= 999}
+                        disabled={item.quantity >= 99999}
                         onClick={() =>
                           handleQuantityChange(item.id, item.quantity + 1)
                         }
@@ -814,7 +814,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                                 <input
                                   type="number"
                                   min={1}
-                                  max={999}
+                                  max={99999}
                                   step={1}
                                   autoFocus
                                   value={pendingAddQty}
@@ -829,7 +829,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                                       return;
                                     }
                                     const num = Math.min(
-                                      999,
+                                      99999,
                                       Math.max(1, parseInt(raw, 10))
                                     );
                                     setPendingAddQty(String(num));
@@ -847,7 +847,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                                 />
                                 <button
                                   type="button"
-                                  disabled={parsedPendingQty >= 999}
+                                  disabled={parsedPendingQty >= 99999}
                                   onClick={() =>
                                     setPendingAddQty(
                                       String(
