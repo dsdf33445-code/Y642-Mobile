@@ -1,10 +1,7 @@
 // src/firebase.ts
 // ============================================================================
 // Firebase 核心設定、Google 身分驗證封裝與統一資料庫路徑模組
-// 本次修復重點：
-// 1. 補齊並匯出 subscribeAuthState、signInWithGoogle、signOutUser 三個驗證函式，
-//    解決 src/App.tsx 的 TS2305 與 TS7006 編譯錯誤
-// 2. 維持統一資料庫路徑 artifacts/mobile-mo/users/{uid} 與明細數量上限 99999
+// 本次更新重點：將 normalizeLegacyMoItem 的數量正規化改為保留小數點後 1 位 (0.1 ~ 99999)
 // ============================================================================
 
 import { initializeApp } from 'firebase/app';
@@ -50,12 +47,11 @@ export const db = getFirestore(app);
 export const provider = new GoogleAuthProvider();
 
 // ============================================================================
-// Google 身分驗證封裝函式（供 src/App.tsx 直接呼叫）
+// Google 身分驗證封裝函式
 // ============================================================================
 
 /**
  * 監聽 Firebase Auth 登入狀態變更
- * 明確標註 User | null 型別，讓呼叫端回呼參數自動具備完整型別推斷
  */
 export const subscribeAuthState = (
   callback: (user: User | null) => void
@@ -339,7 +335,7 @@ export const sortMoItemsByCode = (items: MoLineItem[]): MoLineItem[] => {
 };
 
 /**
- * 正規化單筆 MO 明細（數量限制：最低 1，最高 99999）
+ * 正規化單筆 MO 明細（支援小數點後 1 位，數量範圍：0.1 ~ 99999）
  */
 const normalizeLegacyMoItem = (
   raw: Record<string, unknown>,
@@ -385,9 +381,9 @@ const normalizeLegacyMoItem = (
   const rawQty = Number(
     raw.qty ?? raw.quantity ?? raw.count ?? raw['數量'] ?? 1
   );
-  // 限制數量範圍：1 ~ 99999
+  // 限制數量範圍：0.1 ~ 99999，精確保留小數點後 1 位
   const quantity = Number.isFinite(rawQty)
-    ? Math.min(99999, Math.max(1, Math.round(rawQty)))
+    ? Math.min(99999, Math.max(0.1, Math.round(rawQty * 10) / 10))
     : 1;
 
   const subtotal = Math.round(unitPrice * quantity);
