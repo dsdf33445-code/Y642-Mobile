@@ -1,6 +1,7 @@
 // src/constants.ts
 // ============================================================================
 // 系統常數、多合約資料庫設定、CSV 雙編碼解析引擎與特定格式 Excel 匯出工具
+// 本次更新重點：將合併工令明細數量上限由 999 提升至 99999
 // ============================================================================
 
 import type {
@@ -14,7 +15,7 @@ import type {
  * 1. 「前往 MO」按鈕點擊後跳轉的目標網址
  */
 export const MO_SYSTEM_URL: string =
-  import.meta.env.VITE_MO_SYSTEM_URL || 'https://mwweb.csc.com.tw/MIS/MO/MO_W6X_WebSite/MOXD/MOAUXD.aspx';
+  import.meta.env.VITE_MO_SYSTEM_URL || 'https://cs.csc.com.tw/';
 
 /**
  * 2. 「選擇合約」下拉選單清單（對應 public/products_01.csv 與 public/products_02.csv）
@@ -22,14 +23,14 @@ export const MO_SYSTEM_URL: string =
 export const CONTRACT_DATABASES: ContractConfig[] = [
   {
     id: 'contract-1',
-    name: '協茂',
+    name: '合約一 (products_01.csv)',
     contractCode: 'C01',
     githubExcelUrl: '/products_01.csv',
     fallbackLocalUrl: '/products_01.csv',
   },
   {
     id: 'contract-2',
-    name: '總部大樓低壓設備電氣維修保養',
+    name: '合約二 (products_02.csv)',
     contractCode: 'C02',
     githubExcelUrl: '/products_02.csv',
     fallbackLocalUrl: '/products_02.csv',
@@ -422,7 +423,7 @@ export const fetchContractProducts = async (
 };
 
 /**
- * 合併多筆工令的 MO 明細項目（相同料號+名稱自動累加數量，上限 999，並依項目編號排序）
+ * 合併多筆工令的 MO 明細項目（相同料號+名稱自動累加數量，上限 99999，並依項目編號排序）
  */
 export const mergeMoLineItems = (orders: WorkOrder[]): MoLineItem[] => {
   const mergedMap = new Map<string, MoLineItem>();
@@ -433,7 +434,7 @@ export const mergeMoLineItems = (orders: WorkOrder[]): MoLineItem[] => {
       const existing = mergedMap.get(key);
       if (existing) {
         const nextQty = Math.min(
-          999,
+          99999,
           Math.max(1, Math.round(existing.quantity + item.quantity))
         );
         mergedMap.set(key, {
@@ -442,7 +443,7 @@ export const mergeMoLineItems = (orders: WorkOrder[]): MoLineItem[] => {
           subtotal: Math.round(existing.unitPrice * nextQty),
         });
       } else {
-        const safeQty = Math.min(999, Math.max(1, Math.round(item.quantity)));
+        const safeQty = Math.min(99999, Math.max(1, Math.round(item.quantity)));
         mergedMap.set(key, {
           ...item,
           id: `merged-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
