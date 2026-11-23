@@ -2,9 +2,8 @@
 // ============================================================================
 // 工令明細 (MO 明細) 視圖組件
 // 本次更新重點：
-// 1. 新增項目視窗中，移除原本直接 +1 的「+ 加入」按鈕
-// 2. 改為「點擊項目列」後，於該列展開「數量輸入框 (1~99999)」與「加入按鈕」
-// 3. 輸入完數量並點擊「加入」按鈕（或按 Enter 鍵）後，才正式將該項目與數量加入明細
+// 1. 將已加入項目與新增項目視窗之數量上限由 999 提升至 99999 (最低 1，最高 99999)
+// 2. 加寬數量輸入框 (w-20) 並採用 tabular-nums 等寬數字，確保 5 位數 99999 完整顯示
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback, memo } from 'react';
@@ -59,11 +58,17 @@ interface MoDetailViewProps {
 const contractProductsCache = new Map<string, ContractProductItem[]>();
 
 /**
+ * 工令明細數量上下限常數（最低 1，最高 99999）
+ */
+const MIN_ITEM_QTY = 1;
+const MAX_ITEM_QTY = 99999;
+
+/**
  * 將數量嚴格限制在 1 ~ 99999 整數之間
  */
 const clampQuantity = (val: number): number => {
-  if (!Number.isFinite(val)) return 1;
-  return Math.min(99999, Math.max(1, Math.round(val)));
+  if (!Number.isFinite(val)) return MIN_ITEM_QTY;
+  return Math.min(MAX_ITEM_QTY, Math.max(MIN_ITEM_QTY, Math.round(val)));
 };
 
 export const MoDetailView: FC<MoDetailViewProps> = memo(
@@ -109,7 +114,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       return sortMoItemsByCode(workOrder.items);
     }, [workOrder]);
 
-    // 建立已加入項目的數量對照表（方便在彈出視窗中顯示某項目目前已加入數量）
+    // 建立已加入項目的數量對照表
     const addedQtyMap = useMemo(() => {
       const map = new Map<string, number>();
       if (!workOrder) return map;
@@ -315,7 +320,6 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
       }
 
       commitOrderItems(nextItems);
-      // 加入完成後自動收起該列的數量輸入框並重置預設數量為 1
       setSelectedCatalogKey(null);
       setPendingAddQty('1');
     };
@@ -380,7 +384,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
             <button
               type="button"
               onClick={onBackToList}
-              className="inline-flex items-center gap-1.5 bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-semibold cursor-pointer"
+              className="inline-flex items-center gap-1.5 bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-semibold touch-manipulation cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4" />
               返回工令管理
@@ -398,7 +402,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
             <button
               type="button"
               onClick={onBackToList}
-              className="inline-flex items-center gap-1 text-xs font-medium text-slate-600 hover:text-blue-600 cursor-pointer"
+              className="inline-flex items-center gap-1 text-xs font-medium text-slate-600 hover:text-blue-600 touch-manipulation cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4" />
               返回工令列表
@@ -409,7 +413,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
               <button
                 type="button"
                 onClick={() => exportMoSpecificExcel(workOrder)}
-                className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition-colors touch-manipulation cursor-pointer"
               >
                 <FileDown className="w-3.5 h-3.5" />
                 <span>匯出 Excel</span>
@@ -420,7 +424,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                 href={MO_SYSTEM_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition-colors"
+                className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition-colors touch-manipulation"
               >
                 <span>前往 MO</span>
                 <ExternalLink className="w-3.5 h-3.5" />
@@ -444,7 +448,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
               <div className="text-[11px] text-slate-500">
                 MO 明細共 {sortedOrderItems.length} 項｜總金額
               </div>
-              <div className="text-lg font-extrabold text-blue-600 font-mono">
+              <div className="text-lg font-extrabold text-blue-600 font-mono tabular-nums">
                 ${(workOrder.totalAmount || 0).toLocaleString()}
               </div>
             </div>
@@ -453,7 +457,10 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
           {/* 選擇合約 */}
           <div className="bg-blue-50/60 border border-blue-200/80 rounded-xl p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <label className="flex items-center gap-1.5 text-xs font-bold text-blue-900">
+              <label
+                htmlFor="mo-contract-select"
+                className="flex items-center gap-1.5 text-xs font-bold text-blue-900"
+              >
                 <Database className="w-4 h-4 text-blue-600" />
                 <span>選擇合約</span>
               </label>
@@ -465,7 +472,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                 disabled={isLoadingCatalog}
                 title="重新載入資料"
                 aria-label="重新載入資料"
-                className="p-1.5 text-blue-700 hover:text-blue-900 bg-white hover:bg-blue-50 rounded-lg border border-blue-200 shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
+                className="p-1.5 text-blue-700 hover:text-blue-900 bg-white hover:bg-blue-50 rounded-lg border border-blue-200 shadow-2xs transition-colors touch-manipulation cursor-pointer disabled:opacity-50"
               >
                 <RefreshCw
                   className={`w-4 h-4 ${
@@ -476,6 +483,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
             </div>
 
             <select
+              id="mo-contract-select"
               value={workOrder.contractId}
               onChange={(e) => handleContractChange(e.target.value)}
               className="w-full px-3 py-2 bg-white border border-blue-300 rounded-lg text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -491,8 +499,8 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
               <span className="truncate max-w-full font-mono text-[10px] text-slate-500">
                 資料來源：{resolvedSourceUrl || activeContract?.githubExcelUrl}
               </span>
-              <span className="font-semibold text-blue-700">
-                已載入 {catalogItems.length} 筆合約項目
+              <span className="font-semibold text-blue-700 tabular-nums">
+                已載入 {catalogItems.length} 筆合約工項
               </span>
             </div>
 
@@ -530,7 +538,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                   setSelectedCatalogKey(null);
                   setIsAddModalOpen(true);
                 }}
-                className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 px-3.5 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 px-3.5 py-1.5 rounded-lg font-semibold transition-colors touch-manipulation cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>點擊新增項目</span>
@@ -545,7 +553,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                 >
                   <div className="space-y-0.5 flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-mono text-slate-400">
+                      <span className="text-[11px] font-mono text-slate-400 tabular-nums">
                         #{idx + 1}
                       </span>
                       <span className="font-mono text-xs font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200/60">
@@ -557,27 +565,32 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                     </div>
                     <div className="text-xs text-slate-500 flex items-center gap-3 flex-wrap">
                       {item.spec && <span>規格：{item.spec}</span>}
-                      <span>單價：${item.unitPrice.toLocaleString()}</span>
+                      <span className="tabular-nums">
+                        單價：${item.unitPrice.toLocaleString()}
+                      </span>
                     </div>
                   </div>
 
                   {/* 數量控制器（最低 1，最高 99999）與刪除按鈕 */}
-                  <div className="flex items-center justify-between sm:justify-end gap-3">
+                  <div className="flex items-center justify-between sm:justify-end gap-2.5">
                     <div className="flex items-center border border-slate-200 rounded-lg bg-slate-50">
                       <button
                         type="button"
-                        disabled={item.quantity <= 1}
+                        aria-label="減少數量"
+                        disabled={item.quantity <= MIN_ITEM_QTY}
                         onClick={() =>
                           handleQuantityChange(item.id, item.quantity - 1)
                         }
-                        className="p-1.5 text-slate-600 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                        className="p-1.5 text-slate-600 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed touch-manipulation cursor-pointer"
                       >
                         <Minus className="w-3.5 h-3.5" />
                       </button>
                       <input
                         type="number"
-                        min={1}
-                        max={99999}
+                        inputMode="numeric"
+                        aria-label={`${item.name} 數量`}
+                        min={MIN_ITEM_QTY}
+                        max={MAX_ITEM_QTY}
                         step={1}
                         value={item.quantity}
                         onChange={(e) => {
@@ -592,25 +605,26 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                           const val = parseInt(e.target.value, 10);
                           handleQuantityChange(
                             item.id,
-                            Number.isNaN(val) ? 1 : val
+                            Number.isNaN(val) ? MIN_ITEM_QTY : val
                           );
                         }}
-                        className="w-14 text-center text-xs font-bold bg-white border-x border-slate-200 py-1 focus:outline-none font-mono"
+                        className="w-20 text-center text-xs font-bold bg-white border-x border-slate-200 py-1 focus:outline-none font-mono tabular-nums"
                       />
                       <button
                         type="button"
-                        disabled={item.quantity >= 99999}
+                        aria-label="增加數量"
+                        disabled={item.quantity >= MAX_ITEM_QTY}
                         onClick={() =>
                           handleQuantityChange(item.id, item.quantity + 1)
                         }
-                        className="p-1.5 text-slate-600 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                        className="p-1.5 text-slate-600 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed touch-manipulation cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" />
                       </button>
                     </div>
 
-                    <div className="text-right min-w-[80px]">
-                      <div className="text-xs font-bold text-slate-800 font-mono">
+                    <div className="text-right min-w-[84px]">
+                      <div className="text-xs font-bold text-slate-800 font-mono tabular-nums">
                         ${item.subtotal.toLocaleString()}
                       </div>
                     </div>
@@ -618,8 +632,9 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                     <button
                       type="button"
                       title="刪除此明細項目"
+                      aria-label={`刪除 ${item.name}`}
                       onClick={() => setDeletingItem(item)}
-                      className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                      className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors touch-manipulation cursor-pointer"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -638,7 +653,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
             setIsAddModalOpen(true);
           }}
           title="新增項目"
-          className="fixed bottom-20 right-5 z-30 inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-4 py-3.5 rounded-full shadow-lg hover:shadow-xl transition-all cursor-pointer font-semibold text-sm"
+          className="fixed bottom-20 right-5 z-30 inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-4 py-3.5 rounded-full shadow-lg hover:shadow-xl transition-transform touch-manipulation cursor-pointer font-semibold text-sm"
         >
           <Plus className="w-5 h-5" />
           <span>新增項目</span>
@@ -647,7 +662,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
         {/* 彈出式「新增項目視窗 (Add Item Modal)」 */}
         {isAddModalOpen && (
           <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
-            <div className="bg-white rounded-2xl max-w-xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+            <div className="bg-white rounded-2xl max-w-xl w-full max-h-[85dvh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
               {/* 視窗標題列 */}
               <div className="px-4 py-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
                 <div>
@@ -655,16 +670,17 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                     新增項目
                   </h3>
                   <p className="text-[11px] text-slate-500">
-                    點擊項目列即可輸入數量並加入明細（共 {catalogItems.length} 筆工項）
+                    點擊項目列即可輸入數量（1~99999）並加入明細（共 {catalogItems.length} 筆工項）
                   </p>
                 </div>
                 <button
                   type="button"
+                  aria-label="關閉新增項目視窗"
                   onClick={() => {
                     setSelectedCatalogKey(null);
                     setIsAddModalOpen(false);
                   }}
-                  className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-xl transition-colors cursor-pointer"
+                  className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-xl transition-colors touch-manipulation cursor-pointer"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -689,11 +705,12 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                     {catalogSearch && (
                       <button
                         type="button"
+                        aria-label="清除搜尋關鍵字"
                         onClick={() => {
                           setCatalogSearch('');
                           setSelectedCatalogKey(null);
                         }}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 touch-manipulation cursor-pointer"
                       >
                         <X className="w-4 h-4" />
                       </button>
@@ -702,6 +719,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
 
                   {categories.length > 2 && (
                     <select
+                      aria-label="篩選分類"
                       value={selectedCategory}
                       onChange={(e) => {
                         setSelectedCategory(e.target.value);
@@ -738,14 +756,14 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                     const addedQty =
                       addedQtyMap.get(`${prod.code}__${prod.name}`) || 0;
                     const parsedPendingQty = clampQuantity(
-                      parseInt(pendingAddQty, 10) || 1
+                      parseInt(pendingAddQty, 10) || MIN_ITEM_QTY
                     );
 
                     return (
                       <div
                         key={rowKey}
                         onClick={() => handleSelectCatalogRow(rowKey)}
-                        className={`py-2.5 px-3 rounded-xl transition-all cursor-pointer ${
+                        className={`py-2.5 px-3 rounded-xl transition-colors cursor-pointer ${
                           isSelectedRow
                             ? 'bg-blue-50/70 ring-1 ring-blue-300 my-1 shadow-2xs'
                             : 'hover:bg-slate-50/90'
@@ -762,7 +780,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                                 {prod.name}
                               </span>
                               {addedQty > 0 && (
-                                <span className="text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.2 rounded-md">
+                                <span className="text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.2 rounded-md tabular-nums">
                                   已加: {addedQty}
                                 </span>
                               )}
@@ -773,7 +791,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                                   規格：{prod.spec}
                                 </span>
                               )}
-                              <span className="font-mono font-semibold text-slate-700">
+                              <span className="font-mono font-semibold text-slate-700 tabular-nums">
                                 單價：${prod.unitPrice.toLocaleString()}
                               </span>
                             </div>
@@ -799,7 +817,8 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                               <div className="flex items-center border border-blue-300 rounded-lg bg-white shadow-2xs">
                                 <button
                                   type="button"
-                                  disabled={parsedPendingQty <= 1}
+                                  aria-label="減少待加入數量"
+                                  disabled={parsedPendingQty <= MIN_ITEM_QTY}
                                   onClick={() =>
                                     setPendingAddQty(
                                       String(
@@ -807,14 +826,16 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                                       )
                                     )
                                   }
-                                  className="p-1.5 text-slate-600 hover:text-blue-600 disabled:opacity-30 cursor-pointer"
+                                  className="p-1.5 text-slate-600 hover:text-blue-600 disabled:opacity-30 touch-manipulation cursor-pointer"
                                 >
                                   <Minus className="w-3.5 h-3.5" />
                                 </button>
                                 <input
                                   type="number"
-                                  min={1}
-                                  max={99999}
+                                  inputMode="numeric"
+                                  aria-label="輸入加入數量"
+                                  min={MIN_ITEM_QTY}
+                                  max={MAX_ITEM_QTY}
                                   step={1}
                                   autoFocus
                                   value={pendingAddQty}
@@ -829,8 +850,8 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                                       return;
                                     }
                                     const num = Math.min(
-                                      99999,
-                                      Math.max(1, parseInt(raw, 10))
+                                      MAX_ITEM_QTY,
+                                      Math.max(MIN_ITEM_QTY, parseInt(raw, 10))
                                     );
                                     setPendingAddQty(String(num));
                                   }}
@@ -843,11 +864,12 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                                       );
                                     }
                                   }}
-                                  className="w-16 text-center text-sm font-bold text-slate-800 border-x border-blue-200 py-1 focus:outline-none font-mono"
+                                  className="w-20 text-center text-sm font-bold text-slate-800 border-x border-blue-200 py-1 focus:outline-none font-mono tabular-nums"
                                 />
                                 <button
                                   type="button"
-                                  disabled={parsedPendingQty >= 99999}
+                                  aria-label="增加待加入數量"
+                                  disabled={parsedPendingQty >= MAX_ITEM_QTY}
                                   onClick={() =>
                                     setPendingAddQty(
                                       String(
@@ -855,13 +877,13 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                                       )
                                     )
                                   }
-                                  className="p-1.5 text-slate-600 hover:text-blue-600 disabled:opacity-30 cursor-pointer"
+                                  className="p-1.5 text-slate-600 hover:text-blue-600 disabled:opacity-30 touch-manipulation cursor-pointer"
                                 >
                                   <Plus className="w-3.5 h-3.5" />
                                 </button>
                               </div>
 
-                              <span className="text-xs font-mono text-slate-500 hidden sm:inline">
+                              <span className="text-xs font-mono text-slate-500 hidden sm:inline tabular-nums">
                                 小計：$
                                 {Math.round(
                                   prod.unitPrice * parsedPendingQty
@@ -873,7 +895,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                               <button
                                 type="button"
                                 onClick={() => setSelectedCatalogKey(null)}
-                                className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-200/70 transition-colors cursor-pointer"
+                                className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-200/70 transition-colors touch-manipulation cursor-pointer"
                               >
                                 取消
                               </button>
@@ -882,7 +904,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                                 onClick={() =>
                                   handleAddFromCatalog(prod, parsedPendingQty)
                                 }
-                                className="inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-4 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition-all cursor-pointer"
+                                className="inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-4 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition-transform touch-manipulation cursor-pointer"
                               >
                                 <Plus className="w-3.5 h-3.5" />
                                 <span>加入</span>
@@ -898,7 +920,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
 
               {/* 視窗底部完成列 */}
               <div className="px-4 py-3 border-t border-slate-100 bg-slate-50 flex items-center justify-between">
-                <span className="text-xs text-slate-600 font-medium">
+                <span className="text-xs text-slate-600 font-medium tabular-nums">
                   目前已選入{' '}
                   <strong className="text-blue-600">
                     {sortedOrderItems.length}
@@ -911,7 +933,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                     setSelectedCatalogKey(null);
                     setIsAddModalOpen(false);
                   }}
-                  className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-xl cursor-pointer transition-colors"
+                  className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-xl touch-manipulation cursor-pointer transition-colors"
                 >
                   完成
                 </button>
@@ -942,14 +964,14 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                   <span className="font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
                     {deletingItem.code}
                   </span>
-                  <span className="text-slate-600 font-semibold">
+                  <span className="text-slate-600 font-semibold tabular-nums">
                     數量：{deletingItem.quantity}
                   </span>
                 </div>
                 <div className="text-sm font-bold text-slate-800 truncate pt-0.5">
                   {deletingItem.name}
                 </div>
-                <div className="text-xs font-mono font-semibold text-emerald-700">
+                <div className="text-xs font-mono font-semibold text-emerald-700 tabular-nums">
                   小計：${deletingItem.subtotal.toLocaleString()}
                 </div>
               </div>
@@ -958,14 +980,14 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                 <button
                   type="button"
                   onClick={() => setDeletingItem(null)}
-                  className="w-full py-2.5 rounded-xl text-sm font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+                  className="w-full py-2.5 rounded-xl text-sm font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors touch-manipulation cursor-pointer"
                 >
                   取消
                 </button>
                 <button
                   type="button"
                   onClick={handleConfirmRemoveItem}
-                  className="w-full py-2.5 rounded-xl text-sm font-semibold text-white bg-red-600 hover:bg-red-700 shadow-xs transition-colors cursor-pointer"
+                  className="w-full py-2.5 rounded-xl text-sm font-semibold text-white bg-red-600 hover:bg-red-700 shadow-xs transition-colors touch-manipulation cursor-pointer"
                 >
                   確認刪除
                 </button>
