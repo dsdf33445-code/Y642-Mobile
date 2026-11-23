@@ -1,7 +1,7 @@
 // src/constants.ts
 // ============================================================================
 // 系統常數、多合約資料庫設定、CSV 雙編碼解析引擎與特定格式 Excel 匯出工具
-// 本次修復重點：將 mergeMoLineItems 合併工令數量上限由 999 提升至 99999
+// 本次更新重點：mergeMoLineItems 合併工令數量支援精確保留小數點後 1 位 (0.1 ~ 99999)
 // ============================================================================
 
 import type {
@@ -423,7 +423,7 @@ export const fetchContractProducts = async (
 };
 
 /**
- * 合併多筆工令的 MO 明細項目（相同料號+名稱自動累加數量，上限 99999，並依項目編號排序）
+ * 合併多筆工令的 MO 明細項目（相同料號+名稱自動累加數量，支援小數點後 1 位，上限 99999）
  */
 export const mergeMoLineItems = (orders: WorkOrder[]): MoLineItem[] => {
   const mergedMap = new Map<string, MoLineItem>();
@@ -435,7 +435,10 @@ export const mergeMoLineItems = (orders: WorkOrder[]): MoLineItem[] => {
       if (existing) {
         const nextQty = Math.min(
           99999,
-          Math.max(1, Math.round(existing.quantity + item.quantity))
+          Math.max(
+            0.1,
+            Math.round((existing.quantity + item.quantity) * 10) / 10
+          )
         );
         mergedMap.set(key, {
           ...existing,
@@ -443,7 +446,10 @@ export const mergeMoLineItems = (orders: WorkOrder[]): MoLineItem[] => {
           subtotal: Math.round(existing.unitPrice * nextQty),
         });
       } else {
-        const safeQty = Math.min(99999, Math.max(1, Math.round(item.quantity)));
+        const safeQty = Math.min(
+          99999,
+          Math.max(0.1, Math.round(item.quantity * 10) / 10)
+        );
         mergedMap.set(key, {
           ...item,
           id: `merged-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
