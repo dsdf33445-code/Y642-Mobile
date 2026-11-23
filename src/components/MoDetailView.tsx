@@ -1,9 +1,10 @@
 // src/components/MoDetailView.tsx
 // ============================================================================
 // 工令明細 (MO 明細) 視圖組件
-// 本次更新重點：
-// 1. 將已加入項目與新增項目視窗之數量上限由 999 提升至 99999 (最低 1，最高 99999)
-// 2. 加寬數量輸入框 (w-20) 並採用 tabular-nums 等寬數字，確保 5 位數 99999 完整顯示
+// 本次修復重點：
+// 1. 徹底解除已選入工令之 MO 明細 999 數量上限，全面升級為 1 ~ 99999
+// 2. 抽離獨立數量輸入組件 MoLineQuantityControl，支援順暢輸入 4~5 位數 (如 1500、99999)，
+//    於按下 Enter、失去焦點 (onBlur) 或點擊 +/- 按鈕時寫入 Firestore，避免打字中途被雲端快照覆蓋
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback, memo } from 'react';
@@ -70,6 +71,89 @@ const clampQuantity = (val: number): number => {
   if (!Number.isFinite(val)) return MIN_ITEM_QTY;
   return Math.min(MAX_ITEM_QTY, Math.max(MIN_ITEM_QTY, Math.round(val)));
 };
+
+/**
+ * 獨立的已選入明細數量控制器組件
+ * 解決直接鍵入 4~5 位數 (如 1000 ~ 99999) 時，不會因為每打一個字就寫入資料庫而產生游標跳動
+ */
+interface MoLineQuantityControlProps {
+  itemId: string;
+  itemName: string;
+  quantity: number;
+  onCommitQuantity: (itemId: string, nextQty: number) => void;
+}
+
+const MoLineQuantityControl: FC<MoLineQuantityControlProps> = memo(
+  ({ itemId, itemName, quantity, onCommitQuantity }) => {
+    // 本地輸入字串狀態，允許使用者暫時清空後重新輸入任意 1 ~ 99999 數字
+    const [draftQty, setDraftQty] = useState<string>(String(quantity));
+
+    // 當外部數量（例如點擊 +/- 按鈕或雲端更新）變更時同步更新顯示
+    useEffect(() => {
+      setDraftQty(String(quantity));
+    }, [quantity]);
+
+    // 提交驗證後的最終數量
+    const commitDraftValue = useCallback(() => {
+      const parsed = parseInt(draftQty, 10);
+      const clamped = Number.isNaN(parsed)
+        ? MIN_ITEM_QTY
+        : clampQuantity(parsed);
+      setDraftQty(String(clamped));
+      if (clamped !== quantity) {
+        onCommitQuantity(itemId, clamped);
+      }
+    }, [draftQty, itemId, onCommitQuantity, quantity]);
+
+    return (
+      <div className="flex items-center border border-slate-200 rounded-lg bg-slate-50">
+        <button
+          type="button"
+          aria-label={`減少 ${itemName} 數量`}
+          disabled={quantity <= MIN_ITEM_QTY}
+          onClick={() => onCommitQuantity(itemId, clampQuantity(quantity - 1))}
+          className="p-1.5 text-slate-600 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed touch-manipulation cursor-pointer"
+        >
+          <Minus className="w-3.5 h-3.5" />
+        </button>
+
+        <input
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          aria-label={`${itemName} 數量`}
+          maxLength={5}
+          value={draftQty}
+          onFocus={(e) => e.target.select()}
+          onChange={(e) => {
+            // 僅允許輸入數字，最多 5 碼 (1 ~ 99999)
+            const digitsOnly = e.target.value.replace(/[^0-9]/g, '').slice(0, 5);
+            setDraftQty(digitsOnly);
+          }}
+          onBlur={commitDraftValue}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commitDraftValue();
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          className="w-20 text-center text-xs font-bold text-slate-800 bg-white border-x border-slate-200 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono tabular-nums"
+        />
+
+        <button
+          type="button"
+          aria-label={`增加 ${itemName} 數量`}
+          disabled={quantity >= MAX_ITEM_QTY}
+          onClick={() => onCommitQuantity(itemId, clampQuantity(quantity + 1))}
+          className="p-1.5 text-slate-600 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed touch-manipulation cursor-pointer"
+        >
+          <Plus className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    );
+  }
+);
 
 export const MoDetailView: FC<MoDetailViewProps> = memo(
   ({
@@ -335,20 +419,23 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
     };
 
     // 修改既有 MO 明細的數量（限制最低 1、最高 99999）
-    const handleQuantityChange = (itemId: string, rawQty: number) => {
-      if (!workOrder) return;
-      const safeQty = clampQuantity(rawQty);
-      const nextItems = workOrder.items.map((item) =>
-        item.id === itemId
-          ? {
-              ...item,
-              quantity: safeQty,
-              subtotal: Math.round(item.unitPrice * safeQty),
-            }
-          : item
-      );
-      commitOrderItems(nextItems);
-    };
+    const handleQuantityChange = useCallback(
+      (itemId: string, rawQty: number) => {
+        if (!workOrder) return;
+        const safeQty = clampQuantity(rawQty);
+        const nextItems = workOrder.items.map((item) =>
+          item.id === itemId
+            ? {
+                ...item,
+                quantity: safeQty,
+                subtotal: Math.round(item.unitPrice * safeQty),
+              }
+            : item
+        );
+        commitOrderItems(nextItems);
+      },
+      [workOrder, commitOrderItems]
+    );
 
     if (!workOrder) {
       return (
@@ -520,13 +607,16 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
           </div>
         </div>
 
-        {/* 已選入此工令的 MO 明細清單 */}
+        {/* 已選入此工令的 MO 明細清單（數量上限 99999） */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
               <span>已選入工令之 MO 明細 ({sortedOrderItems.length})</span>
             </h3>
+            <span className="text-[11px] text-slate-400">
+              數量上限：99,999
+            </span>
           </div>
 
           {sortedOrderItems.length === 0 ? (
@@ -573,57 +663,14 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
 
                   {/* 數量控制器（最低 1，最高 99999）與刪除按鈕 */}
                   <div className="flex items-center justify-between sm:justify-end gap-2.5">
-                    <div className="flex items-center border border-slate-200 rounded-lg bg-slate-50">
-                      <button
-                        type="button"
-                        aria-label="減少數量"
-                        disabled={item.quantity <= MIN_ITEM_QTY}
-                        onClick={() =>
-                          handleQuantityChange(item.id, item.quantity - 1)
-                        }
-                        className="p-1.5 text-slate-600 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed touch-manipulation cursor-pointer"
-                      >
-                        <Minus className="w-3.5 h-3.5" />
-                      </button>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        aria-label={`${item.name} 數量`}
-                        min={MIN_ITEM_QTY}
-                        max={MAX_ITEM_QTY}
-                        step={1}
-                        value={item.quantity}
-                        onChange={(e) => {
-                          const rawVal = e.target.value;
-                          if (rawVal === '') return;
-                          const val = parseInt(rawVal, 10);
-                          if (!Number.isNaN(val)) {
-                            handleQuantityChange(item.id, val);
-                          }
-                        }}
-                        onBlur={(e) => {
-                          const val = parseInt(e.target.value, 10);
-                          handleQuantityChange(
-                            item.id,
-                            Number.isNaN(val) ? MIN_ITEM_QTY : val
-                          );
-                        }}
-                        className="w-20 text-center text-xs font-bold bg-white border-x border-slate-200 py-1 focus:outline-none font-mono tabular-nums"
-                      />
-                      <button
-                        type="button"
-                        aria-label="增加數量"
-                        disabled={item.quantity >= MAX_ITEM_QTY}
-                        onClick={() =>
-                          handleQuantityChange(item.id, item.quantity + 1)
-                        }
-                        className="p-1.5 text-slate-600 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed touch-manipulation cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                    <MoLineQuantityControl
+                      itemId={item.id}
+                      itemName={item.name}
+                      quantity={item.quantity}
+                      onCommitQuantity={handleQuantityChange}
+                    />
 
-                    <div className="text-right min-w-[84px]">
+                    <div className="text-right min-w-[88px]">
                       <div className="text-xs font-bold text-slate-800 font-mono tabular-nums">
                         ${item.subtotal.toLocaleString()}
                       </div>
@@ -781,7 +828,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                               </span>
                               {addedQty > 0 && (
                                 <span className="text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.2 rounded-md tabular-nums">
-                                  已加: {addedQty}
+                                  已加: {addedQty.toLocaleString()}
                                 </span>
                               )}
                             </div>
@@ -831,20 +878,18 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                                   <Minus className="w-3.5 h-3.5" />
                                 </button>
                                 <input
-                                  type="number"
+                                  type="text"
                                   inputMode="numeric"
+                                  pattern="[0-9]*"
                                   aria-label="輸入加入數量"
-                                  min={MIN_ITEM_QTY}
-                                  max={MAX_ITEM_QTY}
-                                  step={1}
+                                  maxLength={5}
                                   autoFocus
                                   value={pendingAddQty}
                                   onFocus={(e) => e.target.select()}
                                   onChange={(e) => {
-                                    const raw = e.target.value.replace(
-                                      /[^0-9]/g,
-                                      ''
-                                    );
+                                    const raw = e.target.value
+                                      .replace(/[^0-9]/g, '')
+                                      .slice(0, 5);
                                     if (raw === '') {
                                       setPendingAddQty('');
                                       return;
@@ -965,7 +1010,7 @@ export const MoDetailView: FC<MoDetailViewProps> = memo(
                     {deletingItem.code}
                   </span>
                   <span className="text-slate-600 font-semibold tabular-nums">
-                    數量：{deletingItem.quantity}
+                    數量：{deletingItem.quantity.toLocaleString()}
                   </span>
                 </div>
                 <div className="text-sm font-bold text-slate-800 truncate pt-0.5">
