@@ -95,3 +95,51 @@ test('mergeMoLineItems combines duplicate items and sorts by code', () => {
   assert.equal(merged[1].quantity, 5);
   assert.equal(merged[1].subtotal, 500);
 });
+
+test('substationData creates 42 default stations with real PDF filenames and resolves candidates', async () => {
+  const {
+    createDefaultStations,
+    toSafePdfFileName,
+    toCompactPdfFileName,
+    getPdfCandidateFileNames,
+    filterSubstations,
+    generateSingleLinePdfBytes,
+  } = await import('./substationData');
+
+  assert.equal(toSafePdfFileName('2KB 1/2'), '2KB 1-2.pdf');
+  assert.equal(toCompactPdfFileName('2KB 1/2'), '2KB12.pdf');
+  assert.equal(toCompactPdfFileName('L2 MS.pdf'), 'L2MS.pdf');
+
+  const stations = createDefaultStations();
+  assert.equal(stations.length, 42);
+  assert.equal(stations[0].name, '2KB 1/2');
+  assert.equal(stations[0].pdfFileName, '2KB12.pdf');
+  assert.equal(stations[0].voltage, '11 kV');
+  assert.equal(stations[1].voltage, '480 V');
+
+  const candidates = getPdfCandidateFileNames({
+    ...stations[0],
+    pdfFileName: '2KB 1-2.pdf',
+  });
+  assert.ok(candidates.includes('2KB12.pdf'));
+
+  const byVoltage = filterSubstations(stations, {
+    keyword: '',
+    voltage: '11 kV',
+    district: 'ALL',
+  });
+  assert.equal(byVoltage.length, 21);
+
+  const byKeyword = filterSubstations(stations, {
+    keyword: '2KB',
+    voltage: 'ALL',
+    district: 'ALL',
+  });
+  assert.equal(byKeyword.length, 1);
+  assert.equal(byKeyword[0].name, '2KB 1/2');
+
+  const pdfBytes = generateSingleLinePdfBytes(stations[0]);
+  const pdfHeader = new TextDecoder().decode(pdfBytes.slice(0, 8));
+  assert.equal(pdfHeader, '%PDF-1.4');
+});
+

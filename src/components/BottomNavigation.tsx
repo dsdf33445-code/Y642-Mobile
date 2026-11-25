@@ -1,12 +1,12 @@
 // src/components/BottomNavigation.tsx
 // ============================================================================
 // 底部導覽列組件
-// 僅保留「工令管理」與「工令明細」兩大功能，並符合 TypeScript 嚴格匯入規範
+// 包含「首頁」（系統圖示入口）、「工令管理」、「工令明細」與「變電站」快捷導覽
 // ============================================================================
 
 import { memo } from 'react';
 import type { FC } from 'react';
-import { ClipboardList, FileSpreadsheet } from 'lucide-react';
+import { Home, ClipboardList, FileSpreadsheet, Zap } from 'lucide-react';
 import type { ActiveTab } from '../types';
 
 interface BottomNavigationProps {
@@ -22,8 +22,22 @@ export const BottomNavigation: FC<BottomNavigationProps> = memo(
   ({ activeTab, onTabChange, currentMoCount }) => {
     return (
       <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200 shadow-[0_-2px_10px_rgba(0,0,0,0.04)] pb-safe">
-        <div className="max-w-3xl mx-auto grid grid-cols-2 h-16">
-          {/* 分頁 1：工令管理 */}
+        <div className="max-w-3xl mx-auto grid grid-cols-4 h-16">
+          {/* 分頁 1：首頁 (系統圖示入口) */}
+          <button
+            type="button"
+            onClick={() => onTabChange('home')}
+            className={`flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer ${
+              activeTab === 'home'
+                ? 'text-blue-600 font-semibold bg-blue-50/50'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Home className="w-5 h-5" />
+            <span className="text-xs">首頁</span>
+          </button>
+
+          {/* 分頁 2：工令管理 */}
           <button
             type="button"
             onClick={() => onTabChange('list')}
@@ -37,7 +51,7 @@ export const BottomNavigation: FC<BottomNavigationProps> = memo(
             <span className="text-xs">工令管理</span>
           </button>
 
-          {/* 分頁 2：工令明細 (MO 明細) */}
+          {/* 分頁 3：工令明細 (MO 明細) */}
           <button
             type="button"
             onClick={() => onTabChange('detail')}
@@ -56,6 +70,20 @@ export const BottomNavigation: FC<BottomNavigationProps> = memo(
               )}
             </div>
             <span className="text-xs">工令明細</span>
+          </button>
+
+          {/* 分頁 4：變電站 (變電站單線圖管理系統) */}
+          <button
+            type="button"
+            onClick={() => onTabChange('substation')}
+            className={`flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer ${
+              activeTab === 'substation'
+                ? 'text-amber-600 font-semibold bg-amber-50/60'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Zap className="w-5 h-5" />
+            <span className="text-xs">變電站</span>
           </button>
         </div>
       </nav>

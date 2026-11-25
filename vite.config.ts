@@ -80,6 +80,20 @@ export default defineConfig({
               },
             },
           },
+          {
+            urlPattern: /\/pdfs\/.*\.pdf$/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'substation-pdfs-cache',
+              expiration: {
+                maxEntries: 60,
+                maxAgeSeconds: 60 * 60 * 24 * 30,
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
+            },
+          },
         ],
       },
       devOptions: {

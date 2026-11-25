@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+  <title>變電站單線圖管理系統</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 引入 Mozilla PDF.js 解決手機 (iOS / Android) 無法在視窗內瀏覽 PDF 的問題 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;600;700&display=swap');
+    body {
+      font-family: 'Inter', 'Noto Sans TC', sans-serif;
+      background-color: #f1f5f9;
+      color: #0f172a;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- 頂部導覽列 -->
+  <header class="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-30 shadow-md">
+    <div class="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-2">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <div class="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-lg bg-amber-500/15 border border-amber-400/40 flex items-center justify-center text-amber-400">
+          <svg class="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        </div>
+        <h1 class="text-base sm:text-lg font-bold tracking-wide truncate">變電站單線圖管理系統</h1>
+      </div>
+
+      <div class="flex items-center shrink-0">
+        <button onclick="openAddStationModal()" class="inline-flex items-center gap-1.5 px-3 sm:px-3.5 py-2 rounded-lg text-xs font-semibold bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 transition shadow-sm">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+          </svg>
+          <span>新增變電站</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 主要內容區 -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-5">
+
+    <!-- 統計指標列 (支援 11 kV、3.3 kV、480 V 與手機響應式排版) -->
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-4">
+      <div class="bg-white rounded-xl p-3 sm:p-4 border border-slate-200 shadow-sm col-span-2 sm:col-span-1">
+        <div class="text-xs font-medium text-slate-500">總納管變電站數</div>
+        <div class="mt-1 flex items-baseline justify-between">
+          <span id="statTotal" class="text-xl sm:text-2xl font-bold text-slate-900 mono">0</span>
+          <span class="text-[11px] text-slate-400">每頁 20 站</span>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl p-3 sm:p-4 border border-slate-200 shadow-sm">
+        <div class="text-xs font-medium text-slate-500">11 kV 變電站</div>
+        <div class="mt-1 flex items-baseline justify-between">
+          <span id="stat11kV" class="text-xl sm:text-2xl font-bold text-sky-600 mono">0</span>
+          <span class="text-[11px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 font-medium mono">11 kV</span>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl p-3 sm:p-4 border border-slate-200 shadow-sm">
+        <div class="text-xs font-medium text-slate-500">3.3 kV 變電站</div>
+        <div class="mt-1 flex items-baseline justify-between">
+          <span id="stat33kV" class="text-xl sm:text-2xl font-bold text-teal-600 mono">0</span>
+          <span class="text-[11px] px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 font-medium mono">3.3 kV</span>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl p-3 sm:p-4 border border-slate-200 shadow-sm">
+        <div class="text-xs font-medium text-slate-500">480 V 變電站</div>
+        <div class="mt-1 flex items-baseline justify-between">
+          <span id="stat480V" class="text-xl sm:text-2xl font-bold text-amber-600 mono">0</span>
+          <span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-medium mono">480 V</span>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl p-3 sm:p-4 border border-slate-200 shadow-sm">
+        <div class="text-xs font-medium text-slate-500">納管供電轄區</div>
+        <div class="mt-1 flex items-baseline justify-between">
+          <span id="statDistricts" class="text-xl sm:text-2xl font-bold text-emerald-600 mono">7</span>
+          <span class="text-[11px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-medium">7 轄區</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 搜尋與篩選控制列 -->
+    <div class="bg-white rounded-xl p-3 sm:p-4 border border-slate-200 shadow-sm space-y-3 lg:space-y-0 lg:flex lg:items-center lg:justify-between lg:gap-3">
+      <div class="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2.5 sm:gap-3 flex-1">
+        <!-- 搜尋欄位 -->
+        <div class="relative col-span-2 sm:flex-1 sm:min-w-[220px] max-w-md">
+          <svg class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            id="searchInput"
+            type="text"
+            placeholder="搜尋變電站名稱、轄區、負載或最後更新日期..."
+            oninput="handleFilterChange()"
+            class="w-full pl-9 pr-8 py-2 text-xs sm:text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+          />
+          <button id="clearSearchBtn" onclick="clearSearch()" class="hidden absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- 電壓等級下拉清單 (11 kV、3.3 kV、480 V) -->
+        <div class="col-span-1 flex items-center gap-1.5">
+          <label for="voltageSelect" class="hidden sm:inline text-xs font-semibold text-slate-600 whitespace-nowrap">電壓等級：</label>
+          <select
+            id="voltageSelect"
+            onchange="handleFilterChange()"
+            class="w-full sm:w-auto py-2 pl-2.5 pr-7 text-xs sm:text-sm font-medium border border-slate-300 rounded-lg bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500"
+          >
+            <option value="ALL">全部電壓</option>
+            <option value="11 kV">11 kV</option>
+            <option value="3.3 kV">3.3 kV</option>
+            <option value="480 V">480 V</option>
+          </select>
+        </div>
+
+        <!-- 轄區下拉篩選 -->
+        <div class="col-span-1 flex items-center gap-1.5">
+          <label for="districtSelect" class="hidden sm:inline text-xs font-semibold text-slate-600 whitespace-nowrap">轄區：</label>
+          <select
+            id="districtSelect"
+            onchange="handleFilterChange()"
+            class="w-full sm:w-auto py-2 pl-2.5 pr-7 text-xs sm:text-sm font-medium border border-slate-300 rounded-lg bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500"
+          >
+            <option value="ALL">全部轄區</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between lg:justify-end gap-2 text-xs text-slate-500 pt-1 lg:pt-0 border-t border-slate-100 lg:border-0">
+        <span id="filterSummaryText">顯示第 1–20 站，共 20 站</span>
+        <button onclick="resetFilters()" class="text-sky-600 hover:text-sky-700 font-medium underline ml-2">重設篩選</button>
+      </div>
+    </div>
+
+    <!-- 變電站單線圖表格 (表頭置中，變電站名稱與負載內容靠左，加寬負載欄位) -->
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full border-collapse min-w-[860px]">
+          <thead>
+            <tr class="bg-slate-800 text-slate-100 text-xs uppercase tracking-wider">
+              <th class="py-3 sm:py-3.5 px-3 font-semibold w-14 text-center whitespace-nowrap">序號</th>
+              <th class="py-3 sm:py-3.5 px-4 font-semibold w-48 text-center whitespace-nowrap">變電站名稱</th>
+              <th class="py-3 sm:py-3.5 px-3 font-semibold w-28 text-center whitespace-nowrap">轄區</th>
+              <th class="py-3 sm:py-3.5 px-4 font-semibold min-w-[280px] sm:min-w-[360px] w-1/3 text-center whitespace-nowrap">負載</th>
+              <th class="py-3 sm:py-3.5 px-3 font-semibold text-center whitespace-nowrap">單線圖 (點擊預覽 PDF)</th>
+              <th class="py-3 sm:py-3.5 px-3 font-semibold text-center whitespace-nowrap">最後更新日期</th>
+              <th class="py-3 sm:py-3.5 px-3 font-semibold text-center whitespace-nowrap w-24">編輯</th>
+            </tr>
+          </thead>
+          <tbody id="stationTableBody" class="divide-y divide-slate-200 text-xs sm:text-sm">
+            <!-- 由 JavaScript 動態渲染 -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 分頁控制列 (固定每頁 20 站) -->
+      <div class="bg-slate-50 px-3 sm:px-4 py-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
+        <div class="text-xs text-slate-600">
+          每頁 <span class="font-bold text-slate-900">20</span> 站 · 第 <span id="currentPageLabel" class="font-bold text-slate-900">1</span> / <span id="totalPagesLabel" class="font-bold text-slate-900">1</span> 頁
+        </div>
+        <div id="paginationControls" class="flex items-center gap-1">
+          <!-- 分頁按鈕由 JS 動態產生 -->
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 視窗 1：PDF 預覽 Modal (支援手機與電腦 Canvas 高畫質縮放瀏覽) -->
+  <div id="pdfPreviewModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 hidden items-center justify-center p-2 sm:p-4">
+    <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl h-[92vh] sm:h-[88vh] flex flex-col overflow-hidden">
+      <!-- 頂部標題與操作列 -->
+      <div class="bg-slate-900 text-white px-3.5 sm:px-5 py-3 flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <span id="previewVoltageBadge" class="shrink-0 px-2 py-0.5 rounded text-xs font-bold mono bg-sky-500/20 text-sky-300 border border-sky-400/30">11 kV</span>
+          <div class="min-w-0">
+            <h3 id="previewModalTitle" class="text-sm sm:text-base font-bold truncate">變電站單線圖預覽</h3>
+            <p id="previewModalMeta" class="text-[11px] text-slate-400 mono truncate mt-0.5"></p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1.5 sm:gap-2 ml-auto">
+          <!-- 縮放控制按鈕 -->
+          <div class="inline-flex items-center bg-slate-800 rounded-lg border border-slate-700 p-0.5">
+            <button type="button" onclick="changePdfZoom(-0.25)" class="px-2 py-1 text-xs font-bold text-slate-200 hover:bg-slate-700 rounded" title="縮小">-</button>
+            <span id="pdfZoomLabel" class="px-2 text-[11px] mono text-slate-300">100%</span>
+            <button type="button" onclick="changePdfZoom(0.25)" class="px-2 py-1 text-xs font-bold text-slate-200 hover:bg-slate-700 rounded" title="放大">+</button>
+          </div>
+
+          <a id="btnOpenRawPdf" href="#" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+            <span>開啟原檔</span>
+          </a>
+          <a id="btnDownloadPdf" href="#" download="single-line-diagram.pdf" class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            <span class="hidden sm:inline">下載 PDF</span>
+          </a>
+          <button onclick="closePdfPreviewModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- PDF 畫布檢視容器 -->
+      <div class="flex-1 bg-slate-800 relative overflow-auto" id="pdfScrollWrapper">
+        <div id="pdfLoadingOverlay" class="hidden absolute inset-0 bg-slate-900/80 z-10 flex flex-col items-center justify-center text-white gap-3">
+          <div class="w-9 h-9 border-4 border-sky-400 border-t-transparent rounded-full animate-spin"></div>
+          <p id="pdfLoadingText" class="text-xs sm:text-sm font-medium">正在載入單線圖 PDF...</p>
+        </div>
+        <div id="pdfCanvasContainer" class="min-h-full p-2 sm:p-6 flex flex-col items-center gap-4">
+          <!-- PDF.js Canvas 頁面將渲染於此 -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 視窗 2：編輯變電站 Modal -->
+  <div id="editModal" class="fixed inset-0 bg-slate-900/75 backdrop-blur-sm z-50 hidden items-center justify-center p-2.5 sm:p-4">
+    <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl overflow-hidden">
+      <div class="bg-slate-900 text-white px-4 sm:px-5 py-3.5 flex items-center justify-between">
+        <div>
+          <h3 id="editModalHeader" class="text-sm sm:text-base font-bold">編輯變電站資訊</h3>
+        </div>
+        <button onclick="closeEditModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <form id="editForm" onsubmit="saveStationChanges(event)" class="p-4 sm:p-5 space-y-4">
+        <input type="hidden" id="editStationId" />
+
+        <!-- 第一列：變電站名稱、電壓等級、最後更新日期（並列等寬 grid-cols-3，預設帶入原本儲存在版次 version 的值） -->
+        <div class="grid grid-cols-3 gap-2 sm:gap-3.5">
+          <div class="col-span-1">
+            <label class="block text-xs font-semibold text-slate-700 mb-1 truncate">變電站名稱 *</label>
+            <input
+              id="editStationName"
+              type="text"
+              required
+              class="w-full px-2.5 py-2 text-xs sm:text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            />
+          </div>
+          <div class="col-span-1">
+            <label class="block text-xs font-semibold text-slate-700 mb-1 truncate">電壓等級 *</label>
+            <select
+              id="editVoltage"
+              class="w-full px-2 py-2 text-xs sm:text-sm border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            >
+              <option value="11 kV">11 kV</option>
+              <option value="3.3 kV">3.3 kV</option>
+              <option value="480 V">480 V</option>
+            </select>
+          </div>
+          <div class="col-span-1">
+            <label class="block text-xs font-semibold text-slate-700 mb-1 truncate">最後更新日期 *</label>
+            <input
+              id="editVersion"
+              type="text"
+              inputmode="numeric"
+              required
+              placeholder="請輸入PDF更新日期"
+              title="僅限輸入數字與符號"
+              oninput="this.value = this.value.replace(/[^0-9\-\/.: ]/g, '')"
+              class="w-full px-2.5 py-2 text-xs sm:text-sm border border-slate-300 rounded-lg mono focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <!-- 第二列：轄區 (1格寬)、負載 (2格寬)，並列 -->
+        <div class="grid grid-cols-3 gap-2 sm:gap-3.5">
+          <div class="col-span-1">
+            <label class="block text-xs font-semibold text-slate-700 mb-1 truncate">轄區 *</label>
+            <select
+              id="editDistrict"
+              required
+              class="w-full px-2 py-2 text-xs sm:text-sm border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            >
+              <option value="既設供電區">既設供電區</option>
+              <option value="第二供電區">第二供電區</option>
+              <option value="C3">C3</option>
+              <option value="F3">F3</option>
+              <option value="T2">T2</option>
+              <option value="W6">W6</option>
+              <option value="Y6">Y6</option>
+            </select>
+          </div>
+          <div class="col-span-2">
+            <label class="block text-xs font-semibold text-slate-700 mb-1 truncate">負載</label>
+            <input
+              id="editLoad"
+              type="text"
+              placeholder="請輸入供電負載設備或饋線範圍..."
+              class="w-full px-2.5 py-2 text-xs sm:text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <!-- 第三列：對應 pdfs/ 資料夾內的 PDF 檔名設定 -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">單線圖 PDF 檔案名稱 *</label>
+          <div class="flex items-center">
+            <span class="px-2.5 py-2 text-xs mono bg-slate-100 border border-r-0 border-slate-300 rounded-l-lg text-slate-500">./pdfs/</span>
+            <input
+              id="editPdfFileName"
+              type="text"
+              required
+              placeholder="2KB 1-2.pdf"
+              class="w-full px-2.5 py-2 text-xs sm:text-sm border border-slate-300 rounded-r-lg mono focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            />
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">注意：PDF 檔案名稱請勿包含斜線「/」，建議以「-」代替（例如：2KB 1-2.pdf）。</p>
+        </div>
+
+        <div class="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-200">
+          <button type="button" onclick="closeEditModal()" class="px-4 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100">取消</button>
+          <button id="btnSubmitSave" type="submit" class="px-4 py-2 rounded-lg text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white shadow-sm">
+            儲存變更
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 提示訊息 Toast -->
+  <div id="toastContainer" class="fixed bottom-4 right-4 left-4 sm:left-auto z-50 space-y-2 flex flex-col items-end pointer-events-none"></div>
+
+  <!-- Firebase 與應用程式核心邏輯 -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+    import {
+      getFirestore,
+      collection,
+      doc,
+      setDoc,
+      onSnapshot,
+      query,
+      orderBy,
+      writeBatch
+    } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+    // 設定 PDF.js Worker
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    }
+
+    // Firebase 專案設定
+    const firebaseConfig = {
+      apiKey: "AIzaSyAjIdXLZ3U4oce8xvMS0T7RTYNzX5bQTgc",
+      authDomain: "substation-sld-f8158.firebaseapp.com",
+      projectId: "substation-sld-f8158",
+      storageBucket: "substation-sld-f8158.firebasestorage.app",
+      messagingSenderId: "18015988969",
+      appId: "1:18015988969:web:ef9137e434bf44aec21478"
+    };
+
+    const PAGE_SIZE = 20; // 嚴格設定每頁顯示 20 站
+    const DEFAULT_DISTRICTS = ["既設供電區", "第二供電區", "C3", "F3", "T2", "W6", "Y6"];
+
+    // 不同轄區專屬顏色樣式對應表
+    const DISTRICT_COLOR_MAP = {
+      "既設供電區": "bg-indigo-100 text-indigo-800 border border-indigo-200",
+      "第二供電區": "bg-purple-100 text-purple-800 border border-purple-200",
+      "C3": "bg-emerald-100 text-emerald-800 border border-emerald-200",
+      "F3": "bg-cyan-100 text-cyan-800 border border-cyan-200",
+      "T2": "bg-rose-100 text-rose-800 border border-rose-200",
+      "W6": "bg-amber-100 text-amber-800 border border-amber-200",
+      "Y6": "bg-blue-100 text-blue-800 border border-blue-200"
+    };
+
+    function getDistrictBadgeClass(district) {
+      return DISTRICT_COLOR_MAP[district] || "bg-slate-100 text-slate-700 border border-slate-200";
+    }
+
+    function getVoltageBadgeHtml(voltage) {
+      if (voltage === "11 kV") {
+        return `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold mono bg-sky-100 text-sky-800 border border-sky-200 shrink-0">11 kV</span>`;
+      }
+      if (voltage === "3.3 kV") {
+        return `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold mono bg-teal-100 text-teal-800 border border-teal-200 shrink-0">3.3 kV</span>`;
+      }
+      return `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold mono bg-amber-100 text-amber-800 border border-amber-200 shrink-0">480 V</span>`;
+    }
+
+    let stations = [];
+    let filteredStations = [];
+    let currentPage = 1;
+    let db = null;
+
+    // PDF 預覽狀態
+    let currentPdfDoc = null;
+    let currentPdfScale = 1.0;
+
+    function toSafePdfFileName(stationName) {
+      return `${stationName.replace(/\//g, "-")}.pdf`;
+    }
+
+    // 產生 20 筆預設變電站資料（保留原本儲存在 version 欄位的預設值結構）
+    function createDefaultStations() {
+      const baseNames = [
+        "2KB 1/2", "3KA 1/2", "6KB 1/2", "9KB 1/2", "AKB 1/2",
+        "GKB 5/6", "PKA 1/2", "2NT 5/6", "6NN 1/2", "6NW 3/4",
+        "7NE 3/4", "9NV 1/2", "9NW 1/2", "ANR 1/2", "ANZ 6",
+        "CND 3/4", "GNA 9/A", "GND 9/A", "GNH 1/2", "L2 MS"
+      ];
+
+      return baseNames.map((name, idx) => {
+        const num = idx + 1;
+        const voltage = idx % 2 === 0 ? "11 kV" : "480 V";
+        const district = DEFAULT_DISTRICTS[idx % DEFAULT_DISTRICTS.length];
+        const revMajor = 1 + (idx % 3);
+        const revMinor = idx % 5;
+        return {
+          id: `station_${String(num).padStart(3, "0")}`,
+          order: num,
+          name: name,
+          district: district,
+          load: "-",
+          voltage: voltage,
+          version: `${revMajor}.${revMinor}`,
+          updatedAt: `2026-11-${String(1 + (idx % 20)).padStart(2, "0")}`,
+          pdfFileName: toSafePdfFileName(name)
+        };
+      });
+    }
+
+    // 動態生成標準單線圖 PDF Bytes（當 ./pdfs/ 資料夾尚無該檔案時的備援預覽）
+    function generateSingleLinePdfBytes(station) {
+      const pdfUpdateDate = station.version || "-";
+      const streamLines = [
+        "BT",
+        "/F1 16 Tf",
+        "50 770 Td",
+        `(${station.name} - Single Line Diagram [${station.voltage}]) Tj`,
+        "/F1 11 Tf",
+        "0 -24 Td",
+        `(PDF Last Updated: ${pdfUpdateDate}) Tj`,
+        "0 -20 Td",
+        `(PDF Path: ./pdfs/${station.pdfFileName}) Tj`,
+        "ET",
+        "1.5 w",
+        "50 705 m 545 705 l S",
+        "2.5 w",
+        "100 650 m 500 650 l S",
+        "BT /F1 11 Tf 100 660 Td (Main Busbar: " + station.voltage + " 3P3W 60Hz) Tj ET",
+        "1.5 w",
+        "160 650 m 160 550 l S",
+        "145 550 m 175 550 l 175 520 l 145 520 l h S",
+        "BT /F1 10 Tf 150 532 Td (VCB-1) Tj ET",
+        "160 520 m 160 440 l S",
+        "300 650 m 300 550 l S",
+        "285 550 m 315 550 l 315 520 l 285 520 l h S",
+        "BT /F1 10 Tf 290 532 Td (VCB-2) Tj ET",
+        "300 520 m 300 440 l S",
+        "440 650 m 440 550 l S",
+        "425 550 m 455 550 l 455 520 l 425 520 l h S",
+        "BT /F1 10 Tf 430 532 Td (TIE-CB) Tj ET",
+        "440 520 m 440 440 l S",
+        "50 390 m 545 390 l S"
+      ].join("\n");
+
+      const objects = [
+        "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+        "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+        "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n",
+        `4 0 obj\n<< /Length ${streamLines.length} >>\nstream\n${streamLines}\nendstream\nendobj\n`,
+        "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
+      ];
+
+      let pdf = "%PDF-1.4\n";
+      const offsets = [];
+      for (const obj of objects) {
+        offsets.push(pdf.length);
+        pdf += obj;
+      }
+      const xrefStart = pdf.length;
+      pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+      for (const off of offsets) {
+        pdf += `${String(off).padStart(10, "0")} 00000 n \n`;
+      }
+      pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+
+      const encoder = new TextEncoder();
+      return encoder.encode(pdf);
+    }
+
+    // 連線至 Firebase Cloud Firestore 並啟動即時同步監聽
+    function connectFirebase() {
+      try {
+        const app = initializeApp(firebaseConfig);
+        db = getFirestore(app);
+
+        const colRef = collection(db, "substations");
+        const q = query(colRef, orderBy("order", "asc"));
+
+        onSnapshot(
+          q,
+          async (snapshot) => {
+            if (snapshot.empty) {
+              const initialList = stations.length > 0 ? stations : createDefaultStations();
+              const batch = writeBatch(db);
+              initialList.forEach((st) => {
+                batch.set(doc(db, "substations", st.id), st);
+              });
+              await batch.commit();
+            } else {
+              stations = snapshot.docs.map((d) => {
+                const raw = d.data();
+                return {
+                  ...raw,
+                  load: raw.load !== undefined ? raw.load : "-",
+                  version: raw.version !== undefined ? String(raw.version) : ""
+                };
+              });
+              localStorage.setItem("sld_stations_v7", JSON.stringify(stations));
+              applyFilters(false);
+            }
+          },
+          (err) => {
+            console.error("Firestore 監聽錯誤:", err);
+          }
+        );
+      } catch (err) {
+        console.error("Firebase 初始化錯誤:", err);
+      }
+    }
+
+    // 渲染篩選列的轄區下拉清單
+    function populateDistrictDropdown() {
+      const select = document.getElementById("districtSelect");
+      const currentVal = select.value;
+      select.innerHTML =
+        `<option value="ALL">全部轄區 (${DEFAULT_DISTRICTS.length} 區)</option>` +
+        DEFAULT_DISTRICTS.map((d) => `<option value="${d}">${d}</option>`).join("");
+      if (DEFAULT_DISTRICTS.includes(currentVal)) {
+        select.value = currentVal;
+      }
+    }
+
+    function applyFilters(resetPage = true) {
+      const keyword = document.getElementById("searchInput").value.trim().toLowerCase();
+      const voltage = document.getElementById("voltageSelect").value;
+      const district = document.getElementById("districtSelect").value;
+
+      document.getElementById("clearSearchBtn").classList.toggle("hidden", !keyword);
+
+      filteredStations = stations.filter((st) => {
+        const loadStr = (st.load || "").toLowerCase();
+        const versionStr = (st.version || "").toLowerCase();
+        const matchKeyword =
+          !keyword ||
+          st.name.toLowerCase().includes(keyword) ||
+          st.district.toLowerCase().includes(keyword) ||
+          loadStr.includes(keyword) ||
+          (st.pdfFileName && st.pdfFileName.toLowerCase().includes(keyword)) ||
+          versionStr.includes(keyword);
+        const matchVoltage = voltage === "ALL" || st.voltage === voltage;
+        const matchDistrict = district === "ALL" || st.district === district;
+        return matchKeyword && matchVoltage && matchDistrict;
+      });
+
+      if (resetPage) currentPage = 1;
+      const totalPages = Math.max(1, Math.ceil(filteredStations.length / PAGE_SIZE));
+      if (currentPage > totalPages) currentPage = totalPages;
+
+      updateStats();
+      renderTable();
+      renderPagination(totalPages);
+    }
+
+    window.handleFilterChange = function () {
+      applyFilters(true);
+    };
+
+    window.clearSearch = function () {
+      document.getElementById("searchInput").value = "";
+      applyFilters(true);
+    };
+
+    window.resetFilters = function () {
+      document.getElementById("searchInput").value = "";
+      document.getElementById("voltageSelect").value = "ALL";
+      document.getElementById("districtSelect").value = "ALL";
+      applyFilters(true);
+    };
+
+    function updateStats() {
+      document.getElementById("statTotal").textContent = stations.length;
+      document.getElementById("stat11kV").textContent = stations.filter((s) => s.voltage === "11 kV").length;
+      document.getElementById("stat33kV").textContent = stations.filter((s) => s.voltage === "3.3 kV").length;
+      document.getElementById("stat480V").textContent = stations.filter((s) => s.voltage === "480 V").length;
+      document.getElementById("statDistricts").textContent = DEFAULT_DISTRICTS.length;
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById("stationTableBody");
+      const startIdx = (currentPage - 1) * PAGE_SIZE;
+      const endIdx = Math.min(startIdx + PAGE_SIZE, filteredStations.length);
+      const pageItems = filteredStations.slice(startIdx, endIdx);
+
+      document.getElementById("filterSummaryText").textContent =
+        filteredStations.length === 0
+          ? "查無符合條件的變電站"
+          : `顯示第 ${startIdx + 1}–${endIdx} 站，共 ${filteredStations.length} 站`;
+
+      if (pageItems.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="7" class="py-12 text-center text-slate-400 text-sm">
+              目前沒有符合篩選條件的變電站資料
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = pageItems
+        .map((st, idx) => {
+          const displayIndex = startIdx + idx + 1;
+          const voltageBadge = getVoltageBadgeHtml(st.voltage);
+          const districtBadgeClass = getDistrictBadgeClass(st.district);
+          const displayLoad = st.load && st.load.trim() !== "" ? st.load : "-";
+          const displayPdfDate = st.version && String(st.version).trim() !== "" ? st.version : "-";
+
+          return `
+            <tr class="hover:bg-slate-50/90 transition">
+              <td class="py-3 px-3 text-center font-semibold text-slate-500 mono whitespace-nowrap">${String(displayIndex).padStart(2, "0")}</td>
+              <td class="py-3 px-4 text-left whitespace-nowrap">
+                <div class="flex items-center justify-start gap-2">
+                  ${voltageBadge}
+                  <span class="font-semibold text-slate-900">${st.name}</span>
+                </div>
+              </td>
+              <td class="py-3 px-3 text-center whitespace-nowrap">
+                <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold ${districtBadgeClass}">
+                  ${st.district}
+                </span>
+              </td>
+              <td class="py-3 px-4 text-left text-slate-700 min-w-[280px] sm:min-w-[360px] w-1/3 break-words" title="${displayLoad}">
+                ${displayLoad}
+              </td>
+              <td class="py-3 px-3 text-center whitespace-nowrap">
+                <button
+                  onclick="previewStationPdf('${st.id}')"
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-rose-700 border border-rose-200 transition group"
+                >
+                  <svg class="w-4 h-4 text-rose-600 group-hover:scale-110 transition shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd" />
+                  </svg>
+                  <span class="mono">${st.pdfFileName}</span>
+                </button>
+              </td>
+              <td class="py-3 px-3 text-center whitespace-nowrap">
+                <span class="font-semibold text-slate-800 mono">${displayPdfDate}</span>
+              </td>
+              <td class="py-3 px-3 text-center whitespace-nowrap">
+                <button
+                  onclick="openEditModal('${st.id}')"
+                  class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-sky-600 active:bg-sky-700 text-white transition shadow-sm"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  <span>編輯</span>
+                </button>
+              </td>
+            </tr>
+          `;
+        })
+        .join("");
+    }
+
+    function renderPagination(totalPages) {
+      document.getElementById("currentPageLabel").textContent = currentPage;
+      document.getElementById("totalPagesLabel").textContent = totalPages;
+
+      const container = document.getElementById("paginationControls");
+      let html = `
+        <button
+          onclick="goToPage(${currentPage - 1})"
+          ${currentPage === 1 ? "disabled" : ""}
+          class="px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none"
+        >
+          上一頁
+        </button>
+      `;
+
+      for (let p = 1; p <= totalPages; p++) {
+        const active = p === currentPage;
+        html += `
+          <button
+            onclick="goToPage(${p})"
+            class="w-8 h-8 rounded-lg text-xs font-bold mono transition ${
+              active
+                ? "bg-sky-600 text-white shadow-sm"
+                : "bg-white text-slate-700 border border-slate-300 hover:bg-slate-100"
+            }"
+          >
+            ${p}
+          </button>
+        `;
+      }
+
+      html += `
+        <button
+          onclick="goToPage(${currentPage + 1})"
+          ${currentPage === totalPages ? "disabled" : ""}
+          class="px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none"
+        >
+          下一頁
+        </button>
+      `;
+      container.innerHTML = html;
+    }
+
+    window.goToPage = function (page) {
+      const totalPages = Math.max(1, Math.ceil(filteredStations.length / PAGE_SIZE));
+      if (page < 1 || page > totalPages) return;
+      currentPage = page;
+      renderTable();
+      renderPagination(totalPages);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+
+    // 使用 PDF.js 將 PDF 每一頁繪製到 Canvas 上，支援手機與電腦瀏覽
+    async function renderPdfPagesToCanvas(pdfDoc, scale) {
+      const container = document.getElementById("pdfCanvasContainer");
+      container.innerHTML = "";
+      document.getElementById("pdfZoomLabel").textContent = `${Math.round(scale * 100)}%`;
+
+      const wrapperWidth = document.getElementById("pdfScrollWrapper").clientWidth - 24;
+      const dpr = window.devicePixelRatio || 1;
+
+      for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+        const page = await pdfDoc.getPage(pageNum);
+        const unscaledViewport = page.getViewport({ scale: 1 });
+
+        const fitScale = Math.min(1.5, Math.max(0.55, wrapperWidth / unscaledViewport.width));
+        const finalScale = fitScale * scale;
+        const viewport = page.getViewport({ scale: finalScale });
+
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+
+        canvas.width = Math.floor(viewport.width * dpr);
+        canvas.height = Math.floor(viewport.height * dpr);
+        canvas.style.width = `${Math.floor(viewport.width)}px`;
+        canvas.style.height = `${Math.floor(viewport.height)}px`;
+        canvas.className = "bg-white shadow-xl rounded border border-slate-700 max-w-none";
+
+        container.appendChild(canvas);
+
+        await page.render({
+          canvasContext: context,
+          transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null,
+          viewport: viewport
+        }).promise;
+      }
+    }
+
+    window.changePdfZoom = async function (delta) {
+      if (!currentPdfDoc) return;
+      currentPdfScale = Math.min(3.0, Math.max(0.5, currentPdfScale + delta));
+      await renderPdfPagesToCanvas(currentPdfDoc, currentPdfScale);
+    };
+
+    // 點擊預覽單線圖 PDF
+    window.previewStationPdf = async function (stationId) {
+      const st = stations.find((s) => s.id === stationId);
+      if (!st) return;
+
+      const modal = document.getElementById("pdfPreviewModal");
+      const loadingOverlay = document.getElementById("pdfLoadingOverlay");
+      const downloadBtn = document.getElementById("btnDownloadPdf");
+      const openRawBtn = document.getElementById("btnOpenRawPdf");
+      const container = document.getElementById("pdfCanvasContainer");
+
+      const displayPdfDate = st.version || "-";
+      document.getElementById("previewVoltageBadge").textContent = st.voltage;
+      document.getElementById("previewModalTitle").textContent = `${st.name} — 單線圖預覽`;
+      document.getElementById("previewModalMeta").textContent = `轄區：${st.district} | 負載：${st.load || "-"} | 最後更新日期：${displayPdfDate}`;
+
+      modal.classList.remove("hidden");
+      modal.classList.add("flex");
+      container.innerHTML = "";
+      loadingOverlay.classList.remove("hidden");
+
+      const safeFileName = (st.pdfFileName || toSafePdfFileName(st.name)).replace(/\//g, "-");
+      const relativePdfPath = `./pdfs/${encodeURIComponent(safeFileName)}`;
+
+      try {
+        let pdfBytes = null;
+
+        try {
+          const resp = await fetch(`${relativePdfPath}?t=${Date.now()}`);
+          if (resp.ok) {
+            const contentType = resp.headers.get("content-type") || "";
+            if (!contentType.includes("text/html")) {
+              const arrayBuffer = await resp.arrayBuffer();
+              pdfBytes = new Uint8Array(arrayBuffer);
+            }
+          }
+        } catch (e) {
+          console.warn("讀取 ./pdfs/ 未命中:", e);
+        }
+
+        if (!pdfBytes) {
+          pdfBytes = generateSingleLinePdfBytes(st);
+        }
+
+        const pdfBlob = new Blob([pdfBytes], { type: "application/pdf" });
+        const blobUrl = URL.createObjectURL(pdfBlob);
+        downloadBtn.href = blobUrl;
+        downloadBtn.download = safeFileName;
+        openRawBtn.href = blobUrl;
+
+        currentPdfScale = 1.0;
+        const loadingTask = window.pdfjsLib.getDocument({ data: pdfBytes });
+        currentPdfDoc = await loadingTask.promise;
+        await renderPdfPagesToCanvas(currentPdfDoc, currentPdfScale);
+      } catch (err) {
+        console.error(err);
+        showToast("載入 PDF 發生錯誤：" + err.message, "error");
+      } finally {
+        loadingOverlay.classList.add("hidden");
+      }
+    };
+
+    window.closePdfPreviewModal = function () {
+      const modal = document.getElementById("pdfPreviewModal");
+      document.getElementById("pdfCanvasContainer").innerHTML = "";
+      currentPdfDoc = null;
+      modal.classList.add("hidden");
+      modal.classList.remove("flex");
+    };
+
+    // 開啟編輯視窗：預設帶入原本儲存在版次 (st.version) 的值
+    window.openEditModal = function (stationId) {
+      const st = stations.find((s) => s.id === stationId);
+      if (!st) return;
+
+      document.getElementById("editModalHeader").textContent = `編輯變電站資訊 — ${st.name}`;
+      document.getElementById("editStationId").value = st.id;
+      document.getElementById("editStationName").value = st.name;
+      document.getElementById("editVoltage").value = st.voltage;
+      document.getElementById("editVersion").value = String(st.version || "").replace(/[^0-9\-\/.: ]/g, "");
+      document.getElementById("editDistrict").value = DEFAULT_DISTRICTS.includes(st.district) ? st.district : DEFAULT_DISTRICTS[0];
+      document.getElementById("editLoad").value = st.load && st.load !== "-" ? st.load : "";
+      document.getElementById("editPdfFileName").value = (st.pdfFileName || toSafePdfFileName(st.name)).replace(/\//g, "-");
+
+      const modal = document.getElementById("editModal");
+      modal.classList.remove("hidden");
+      modal.classList.add("flex");
+    };
+
+    window.openAddStationModal = function () {
+      document.getElementById("editModalHeader").textContent = "新增變電站";
+      document.getElementById("editStationId").value = `station_${Date.now()}`;
+      document.getElementById("editStationName").value = "";
+      document.getElementById("editVoltage").value = "11 kV";
+      document.getElementById("editVersion").value = "";
+      document.getElementById("editDistrict").value = DEFAULT_DISTRICTS[0];
+      document.getElementById("editLoad").value = "";
+      document.getElementById("editPdfFileName").value = "";
+
+      const modal = document.getElementById("editModal");
+      modal.classList.remove("hidden");
+      modal.classList.add("flex");
+    };
+
+    window.closeEditModal = function () {
+      const modal = document.getElementById("editModal");
+      modal.classList.add("hidden");
+      modal.classList.remove("flex");
+    };
+
+    // 儲存變電站變更（將最後更新日期存回 version 欄位）
+    window.saveStationChanges = async function (event) {
+      event.preventDefault();
+      const stationId = document.getElementById("editStationId").value;
+      const name = document.getElementById("editStationName").value.trim();
+      const voltage = document.getElementById("editVoltage").value;
+      const version = document.getElementById("editVersion").value.replace(/[^0-9\-\/.: ]/g, "").trim();
+      const district = document.getElementById("editDistrict").value;
+      const load = document.getElementById("editLoad").value.trim() || "-";
+
+      let pdfFileName = document.getElementById("editPdfFileName").value.trim() || toSafePdfFileName(name);
+      pdfFileName = pdfFileName.replace(/\//g, "-");
+      if (!pdfFileName.toLowerCase().endsWith(".pdf")) {
+        pdfFileName += ".pdf";
+      }
+
+      const existing = stations.find((s) => s.id === stationId);
+
+      const updatedStation = {
+        id: stationId,
+        order: existing ? existing.order : stations.length + 1,
+        name,
+        district,
+        load,
+        voltage,
+        version,
+        updatedAt: existing && existing.updatedAt ? existing.updatedAt : "",
+        pdfFileName
+      };
+
+      const btnSubmit = document.getElementById("btnSubmitSave");
+      btnSubmit.disabled = true;
+
+      try {
+        if (db) {
+          await setDoc(doc(db, "substations", stationId), updatedStation);
+          showToast(`已儲存「${name}」並同步更新！`, "success");
+        } else {
+          if (existing) {
+            const idx = stations.findIndex((s) => s.id === stationId);
+            stations[idx] = updatedStation;
+          } else {
+            stations.push(updatedStation);
+          }
+          localStorage.setItem("sld_stations_v7", JSON.stringify(stations));
+          applyFilters(false);
+          showToast(`已更新「${name}」`, "info");
+        }
+        closeEditModal();
+      } catch (err) {
+        console.error(err);
+        showToast("儲存失敗（請確認 Firebase Rules 權限）：" + err.message, "error");
+      } finally {
+        btnSubmit.disabled = false;
+      }
+    };
+
+    function showToast(message, type = "info") {
+      const container = document.getElementById("toastContainer");
+      const toast = document.createElement("div");
+      const colors = {
+        success: "bg-emerald-900 text-white border-emerald-700",
+        error: "bg-rose-900 text-white border-rose-700",
+        info: "bg-slate-900 text-white border-slate-700"
+      };
+      toast.className = `px-4 py-2.5 rounded-xl shadow-lg border text-xs font-medium flex items-center gap-2 transition-all duration-300 pointer-events-auto ${colors[type] || colors.info}`;
+      toast.innerHTML = `<span>${message}</span>`;
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.style.opacity = "0";
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    // 系統啟動初始化
+    window.addEventListener("DOMContentLoaded", () => {
+      populateDistrictDropdown();
+
+      const localSaved = localStorage.getItem("sld_stations_v7");
+      if (localSaved) {
+        try {
+          stations = JSON.parse(localSaved);
+        } catch (e) {
+          stations = createDefaultStations();
+        }
+      } else {
+        stations = createDefaultStations();
+      }
+      applyFilters(true);
+      connectFirebase();
+    });
+  </script>
+</body>
+</html>

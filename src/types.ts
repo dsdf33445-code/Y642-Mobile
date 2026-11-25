@@ -5,9 +5,38 @@
 // ============================================================================
 
 /**
- * 底部導覽列分頁類型（已移除 'agreement' 協議書分頁，僅保留工令管理與工令明細）
+ * 底部導覽列與系統入口分頁類型（包含：首頁入口、工令管理、工令明細、變電站單線圖管理系統）
  */
-export type ActiveTab = 'list' | 'detail';
+export type ActiveTab = 'home' | 'list' | 'detail' | 'substation';
+
+/**
+ * 變電站電壓等級
+ */
+export type VoltageLevel = '11 kV' | '3.3 kV' | '480 V';
+
+/**
+ * 變電站單線圖資料結構
+ */
+export interface SubstationItem {
+  /** 變電站唯一識別碼 */
+  id: string;
+  /** 排序序號 */
+  order: number;
+  /** 變電站名稱（如：2KB 1/2） */
+  name: string;
+  /** 供電轄區（如：既設供電區、第二供電區、C3、F3、T2、W6、Y6） */
+  district: string;
+  /** 供電負載設備或饋線範圍 */
+  load: string;
+  /** 電壓等級（11 kV、3.3 kV、480 V） */
+  voltage: VoltageLevel;
+  /** 最後更新日期 / 版次 */
+  version: string;
+  /** 系統更新時間戳 */
+  updatedAt: string;
+  /** 對應 ./pdfs/ 資料夾內的 PDF 檔案名稱 */
+  pdfFileName: string;
+}
 
 /**
  * 登入使用者資料結構（用於區分個人帳號資料，確保不同登入者只看到自己建立的工令）

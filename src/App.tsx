@@ -36,6 +36,8 @@ import {
 } from './firebase';
 import { WorkOrderListView } from './components/WorkOrderListView';
 import { MoDetailView } from './components/MoDetailView';
+import { HomePortalView } from './components/HomePortalView';
+import { SubstationView } from './components/SubstationView';
 import { BottomNavigation } from './components/BottomNavigation';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { OfflineIndicator } from './components/OfflineIndicator';
@@ -389,17 +391,34 @@ export const App: FC = () => {
     <div className="min-h-screen bg-slate-100 text-slate-800">
       {/* 頂部標題列 */}
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-xs border-b border-slate-200">
-        <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
+        <div
+          className={`${
+            activeTab === 'substation' ? 'max-w-7xl' : 'max-w-3xl'
+          } mx-auto px-4 h-14 flex items-center justify-between`}
+        >
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white">
+            <button
+              type="button"
+              onClick={() => setActiveTab('home')}
+              title="返回首頁入口"
+              className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white cursor-pointer"
+            >
               <Wrench className="w-4 h-4" />
-            </div>
+            </button>
             <div>
               <h1 className="text-sm font-extrabold text-slate-800 leading-tight">
-                工令管理系統
+                {activeTab === 'substation'
+                  ? '變電站單線圖管理系統'
+                  : '工令管理系統'}
               </h1>
               <p className="text-[11px] text-slate-500">
-                {activeTab === 'list' ? '工令管理' : '工令明細'}
+                {activeTab === 'home'
+                  ? '首頁系統入口'
+                  : activeTab === 'list'
+                  ? '工令管理'
+                  : activeTab === 'detail'
+                  ? '工令明細'
+                  : '變電站單線圖'}
               </p>
             </div>
           </div>
@@ -453,7 +472,11 @@ export const App: FC = () => {
       </header>
 
       {/* 主內容區 */}
-      <main className="max-w-3xl mx-auto px-4 pt-4">
+      <main
+        className={`${
+          activeTab === 'substation' ? 'max-w-7xl' : 'max-w-3xl'
+        } mx-auto px-4 pt-4`}
+      >
         {unauthorizedDomain && (
           <div className="mb-3 bg-amber-50 border border-amber-200 rounded-2xl p-3 text-xs text-amber-900 flex items-start justify-between gap-2.5">
             <div className="space-y-1 flex-1 min-w-0">
@@ -496,7 +519,11 @@ export const App: FC = () => {
             </button>
           </div>
         )}
-        {activeTab === 'list' ? (
+        {activeTab === 'home' ? (
+          <HomePortalView onNavigate={setActiveTab} />
+        ) : activeTab === 'substation' ? (
+          <SubstationView />
+        ) : activeTab === 'list' ? (
           <WorkOrderListView
             workOrders={workOrders}
             selectedOrderId={selectedOrderId}
