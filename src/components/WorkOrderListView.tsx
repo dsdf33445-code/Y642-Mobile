@@ -107,6 +107,9 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
     const [mergedTitle, setMergedTitle] = useState('');
     const [deleteSourceAfterMerge, setDeleteSourceAfterMerge] = useState(false);
     const [mergeError, setMergeError] = useState<string | null>(null);
+    const [mergeSelectionNotice, setMergeSelectionNotice] = useState<
+      string | null
+    >(null);
 
     // 美化版刪除確認視窗狀態
     const [deletingOrder, setDeletingOrder] = useState<WorkOrder | null>(null);
@@ -137,6 +140,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
 
     // 切換單筆工令勾選狀態
     const toggleCheckOrder = (id: string) => {
+      setMergeSelectionNotice(null);
       setCheckedIds((prev) =>
         prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
       );
@@ -144,6 +148,7 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
 
     // 全選 / 取消全選目前篩選列表
     const toggleSelectAll = () => {
+      setMergeSelectionNotice(null);
       if (
         checkedIds.length === filteredOrders.length &&
         filteredOrders.length > 0
@@ -223,9 +228,10 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
     // 開啟合併工令確認視窗
     const handleOpenMergeModal = () => {
       if (checkedWorkOrders.length < 2) {
-        window.alert('請先勾選至少 2 筆要合併的工令！');
+        setMergeSelectionNotice('請先勾選至少 2 筆要合併的工令！');
         return;
       }
+      setMergeSelectionNotice(null);
       const first = checkedWorkOrders[0];
       const defaultMergedNo = sanitizeWoNumberInput(first.woNumber);
       setMergedWoNumber(defaultMergedNo);
@@ -348,6 +354,19 @@ export const WorkOrderListView: FC<WorkOrderListViewProps> = memo(
               <span>新增工令</span>
             </button>
           </div>
+
+          {mergeSelectionNotice && (
+            <div className="text-xs font-medium text-purple-800 bg-purple-50 border border-purple-200 rounded-xl px-3 py-2 flex items-center justify-between">
+              <span>{mergeSelectionNotice}</span>
+              <button
+                type="button"
+                onClick={() => setMergeSelectionNotice(null)}
+                className="text-purple-600 hover:text-purple-900 font-semibold cursor-pointer"
+              >
+                關閉
+              </button>
+            </div>
+          )}
         </div>
 
         {/* 工令卡片列表 */}

@@ -1,7 +1,6 @@
 // src/constants.ts
 // ============================================================================
 // 系統常數、多合約資料庫設定、CSV 雙編碼解析引擎與特定格式 Excel 匯出工具
-// 本次更新重點：mergeMoLineItems 合併工令數量支援精確保留小數點後 1 位 (0.1 ~ 99999)
 // ============================================================================
 
 import type {
@@ -15,7 +14,7 @@ import type {
  * 1. 「前往 MO」按鈕點擊後跳轉的目標網址
  */
 export const MO_SYSTEM_URL: string =
-  import.meta.env.VITE_MO_SYSTEM_URL || 'https://cs.csc.com.tw/';
+  import.meta.env?.VITE_MO_SYSTEM_URL || 'https://mwweb.csc.com.tw/MIS/MO/MO_W6X_WebSite/MOXD/MOAUXD.aspx';
 
 /**
  * 2. 「選擇合約」下拉選單清單（對應 public/products_01.csv 與 public/products_02.csv）
@@ -23,14 +22,14 @@ export const MO_SYSTEM_URL: string =
 export const CONTRACT_DATABASES: ContractConfig[] = [
   {
     id: 'contract-1',
-    name: '合約一 (products_01.csv)',
+    name: '協茂',
     contractCode: 'C01',
     githubExcelUrl: '/products_01.csv',
     fallbackLocalUrl: '/products_01.csv',
   },
   {
     id: 'contract-2',
-    name: '合約二 (products_02.csv)',
+    name: '總部大樓低壓設備電氣維修保養',
     contractCode: 'C02',
     githubExcelUrl: '/products_02.csv',
     fallbackLocalUrl: '/products_02.csv',
@@ -44,7 +43,7 @@ export const resolveLocalAssetUrl = (path: string): string => {
   if (path.startsWith('http://') || path.startsWith('https://')) {
     return path;
   }
-  const base = import.meta.env.BASE_URL || '/';
+  const base = import.meta.env?.BASE_URL || '/';
   const cleanBase = base.endsWith('/') ? base : `${base}/`;
   const cleanPath = path.startsWith('/') ? path.slice(1) : path;
   return `${cleanBase}${cleanPath}`;
@@ -423,7 +422,7 @@ export const fetchContractProducts = async (
 };
 
 /**
- * 合併多筆工令的 MO 明細項目（相同料號+名稱自動累加數量，支援小數點後 1 位，上限 99999）
+ * 合併多筆工令的 MO 明細項目（相同料號+名稱自動累加數量，上限 999，並依項目編號排序）
  */
 export const mergeMoLineItems = (orders: WorkOrder[]): MoLineItem[] => {
   const mergedMap = new Map<string, MoLineItem>();
@@ -434,11 +433,8 @@ export const mergeMoLineItems = (orders: WorkOrder[]): MoLineItem[] => {
       const existing = mergedMap.get(key);
       if (existing) {
         const nextQty = Math.min(
-          99999,
-          Math.max(
-            0.1,
-            Math.round((existing.quantity + item.quantity) * 10) / 10
-          )
+          999,
+          Math.max(1, Math.round(existing.quantity + item.quantity))
         );
         mergedMap.set(key, {
           ...existing,
@@ -446,10 +442,7 @@ export const mergeMoLineItems = (orders: WorkOrder[]): MoLineItem[] => {
           subtotal: Math.round(existing.unitPrice * nextQty),
         });
       } else {
-        const safeQty = Math.min(
-          99999,
-          Math.max(0.1, Math.round(item.quantity * 10) / 10)
-        );
+        const safeQty = Math.min(999, Math.max(1, Math.round(item.quantity)));
         mergedMap.set(key, {
           ...item,
           id: `merged-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -474,10 +467,9 @@ export const mergeMoLineItems = (orders: WorkOrder[]): MoLineItem[] => {
  */
 export const exportMoSpecificExcel = async (
   workOrder: WorkOrder
-): Promise<void> => {
+): Promise<boolean> => {
   if (!workOrder || workOrder.items.length === 0) {
-    window.alert('目前工令尚無 MO 明細項目可供匯出！');
-    return;
+    return false;
   }
 
   const safeFilename = `${workOrder.woNumber}_${workOrder.title}`.replace(
@@ -529,4 +521,5 @@ export const exportMoSpecificExcel = async (
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   }
+  return true;
 };
