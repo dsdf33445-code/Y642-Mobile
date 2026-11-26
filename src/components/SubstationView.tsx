@@ -73,7 +73,7 @@ export const SubstationView: FC = () => {
   const [editId, setEditId] = useState<string>('');
   const [editName, setEditName] = useState<string>('');
   const [editVoltage, setEditVoltage] = useState<VoltageLevel>('11 kV');
-  const [editVersion, setEditVersion] = useState<string>('');
+  const [editUpdatedAt, setEditUpdatedAt] = useState<string>('');
   const [editDistrict, setEditDistrict] = useState<string>(DEFAULT_DISTRICTS[0]);
   const [editLoad, setEditLoad] = useState<string>('');
   const [editPdfFileName, setEditPdfFileName] = useState<string>('');
@@ -174,20 +174,20 @@ export const SubstationView: FC = () => {
     setEditId(`station_${Date.now()}`);
     setEditName('');
     setEditVoltage('11 kV');
-    setEditVersion('');
+    setEditUpdatedAt(new Date().toISOString().slice(0, 10));
     setEditDistrict(DEFAULT_DISTRICTS[0]);
     setEditLoad('');
     setEditPdfFileName('');
     setIsEditModalOpen(true);
   };
 
-  // 開啟編輯變電站視窗
+  // 開啟編輯變電站視窗（最後更新日期帶入 station.updatedAt）
   const handleOpenEditModal = (station: SubstationItem) => {
     setIsAddingNew(false);
     setEditId(station.id);
     setEditName(station.name);
     setEditVoltage(station.voltage);
-    setEditVersion(sanitizeVersionInput(String(station.version || '')));
+    setEditUpdatedAt(sanitizeVersionInput(String(station.updatedAt || '')));
     setEditDistrict(
       DEFAULT_DISTRICTS.includes(station.district)
         ? station.district
@@ -203,13 +203,13 @@ export const SubstationView: FC = () => {
     setIsEditModalOpen(true);
   };
 
-  // 儲存新增或編輯變電站
+  // 儲存新增或編輯變電站（將最後更新日期存入 updatedAt 欄位）
   const handleSaveStation = async (e: FormEvent) => {
     e.preventDefault();
     const trimmedName = editName.trim();
     if (!trimmedName) return;
 
-    const cleanVersion = sanitizeVersionInput(editVersion).trim();
+    const cleanUpdatedAt = sanitizeVersionInput(editUpdatedAt).trim();
     const cleanLoad = editLoad.trim() || '-';
 
     let pdfFileName =
@@ -227,11 +227,8 @@ export const SubstationView: FC = () => {
       district: editDistrict,
       load: cleanLoad,
       voltage: editVoltage,
-      version: cleanVersion,
-      updatedAt:
-        existing && existing.updatedAt
-          ? existing.updatedAt
-          : new Date().toISOString().slice(0, 10),
+      version: existing?.version || '1.0',
+      updatedAt: cleanUpdatedAt || new Date().toISOString().slice(0, 10),
       pdfFileName,
     };
 
@@ -645,36 +642,130 @@ export const SubstationView: FC = () => {
         </div>
       </div>
 
-      {/* 變電站單線圖表格 */}
+      {/* 變電站單線圖清單（手機版：免橫向滾輪卡片式列表；桌面版：完整表格） */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse min-w-[860px]">
+        {/* 手機 / 平板版卡片列表 (零橫向滾動) */}
+        <div className="lg:hidden divide-y divide-slate-200">
+          {pageItems.length === 0 ? (
+            <div className="py-12 px-4 text-center text-slate-400 text-sm">
+              目前沒有符合篩選條件的變電站資料
+            </div>
+          ) : (
+            pageItems.map((st, idx) => {
+              const displayIndex = startIdx + idx + 1;
+              const displayLoad =
+                st.load && st.load.trim() !== '' ? st.load : '-';
+              const displayUpdatedAt =
+                st.updatedAt && String(st.updatedAt).trim() !== ''
+                  ? st.updatedAt
+                  : '-';
+
+              return (
+                <div
+                  key={st.id}
+                  className="p-3.5 space-y-2.5 active:bg-slate-50/80 transition-colors"
+                >
+                  {/* 第一列：序號 + 電壓 + 變電站名稱 | 右側轄區標籤 */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs font-semibold text-slate-400 font-mono tabular-nums shrink-0">
+                        {String(displayIndex).padStart(2, '0')}
+                      </span>
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold font-mono shrink-0 ${getVoltageBadgeClass(
+                          st.voltage
+                        )}`}
+                      >
+                        {st.voltage}
+                      </span>
+                      <span className="font-bold text-slate-900 text-sm truncate">
+                        {st.name}
+                      </span>
+                    </div>
+
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold shrink-0 ${getDistrictBadgeClass(
+                        st.district
+                      )}`}
+                    >
+                      {st.district}
+                    </span>
+                  </div>
+
+                  {/* 第二列：負載與最後更新日期 (updatedAt) */}
+                  <div className="bg-slate-50 rounded-lg px-3 py-2 text-xs space-y-1 border border-slate-100">
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-slate-500 shrink-0">負載</span>
+                      <span className="text-slate-700 text-right wrap-break-word min-w-0">
+                        {displayLoad}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-slate-500 shrink-0">
+                        最後更新日期
+                      </span>
+                      <span className="font-semibold text-slate-800 font-mono tabular-nums">
+                        {displayUpdatedAt}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 第三列：單線圖 PDF 預覽按鈕與編輯按鈕 */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleOpenPreview(st)}
+                      className="flex-1 min-w-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-rose-700 border border-rose-200 transition-colors cursor-pointer touch-manipulation"
+                    >
+                      <FileText className="w-4 h-4 text-rose-600 shrink-0" />
+                      <span className="font-mono truncate">
+                        {st.pdfFileName}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEditModal(st)}
+                      className="shrink-0 inline-flex items-center justify-center gap-1 px-3.5 py-2 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-sky-600 active:bg-sky-700 text-white transition-colors shadow-xs cursor-pointer touch-manipulation"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>編輯</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* 桌面版完整 7 欄表格 */}
+        <div className="hidden lg:block overflow-x-auto">
+          <table className="w-full border-collapse">
             <thead>
               <tr className="bg-slate-800 text-slate-100 text-xs uppercase tracking-wider">
-                <th className="py-3 sm:py-3.5 px-3 font-semibold w-14 text-center whitespace-nowrap">
+                <th className="py-3.5 px-3 font-semibold w-14 text-center whitespace-nowrap">
                   序號
                 </th>
-                <th className="py-3 sm:py-3.5 px-4 font-semibold w-48 text-center whitespace-nowrap">
+                <th className="py-3.5 px-4 font-semibold w-48 text-center whitespace-nowrap">
                   變電站名稱
                 </th>
-                <th className="py-3 sm:py-3.5 px-3 font-semibold w-28 text-center whitespace-nowrap">
+                <th className="py-3.5 px-3 font-semibold w-28 text-center whitespace-nowrap">
                   轄區
                 </th>
-                <th className="py-3 sm:py-3.5 px-4 font-semibold min-w-[280px] sm:min-w-[360px] w-1/3 text-center whitespace-nowrap">
+                <th className="py-3.5 px-4 font-semibold min-w-[280px] w-1/3 text-center whitespace-nowrap">
                   負載
                 </th>
-                <th className="py-3 sm:py-3.5 px-3 font-semibold text-center whitespace-nowrap">
+                <th className="py-3.5 px-3 font-semibold text-center whitespace-nowrap">
                   單線圖 (點擊預覽 PDF)
                 </th>
-                <th className="py-3 sm:py-3.5 px-3 font-semibold text-center whitespace-nowrap">
+                <th className="py-3.5 px-3 font-semibold text-center whitespace-nowrap">
                   最後更新日期
                 </th>
-                <th className="py-3 sm:py-3.5 px-3 font-semibold text-center whitespace-nowrap w-24">
+                <th className="py-3.5 px-3 font-semibold text-center whitespace-nowrap w-24">
                   編輯
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 text-xs sm:text-sm">
+            <tbody className="divide-y divide-slate-200 text-sm">
               {pageItems.length === 0 ? (
                 <tr>
                   <td
@@ -689,9 +780,9 @@ export const SubstationView: FC = () => {
                   const displayIndex = startIdx + idx + 1;
                   const displayLoad =
                     st.load && st.load.trim() !== '' ? st.load : '-';
-                  const displayPdfDate =
-                    st.version && String(st.version).trim() !== ''
-                      ? st.version
+                  const displayUpdatedAt =
+                    st.updatedAt && String(st.updatedAt).trim() !== ''
+                      ? st.updatedAt
                       : '-';
 
                   return (
@@ -726,7 +817,7 @@ export const SubstationView: FC = () => {
                         </span>
                       </td>
                       <td
-                        className="py-3 px-4 text-left text-slate-700 min-w-[280px] sm:min-w-[360px] w-1/3 wrap-break-word"
+                        className="py-3 px-4 text-left text-slate-700 min-w-[280px] w-1/3 wrap-break-word"
                         title={displayLoad}
                       >
                         {displayLoad}
@@ -743,7 +834,7 @@ export const SubstationView: FC = () => {
                       </td>
                       <td className="py-3 px-3 text-center whitespace-nowrap">
                         <span className="font-semibold text-slate-800 font-mono tabular-nums">
-                          {displayPdfDate}
+                          {displayUpdatedAt}
                         </span>
                       </td>
                       <td className="py-3 px-3 text-center whitespace-nowrap">
@@ -831,7 +922,7 @@ export const SubstationView: FC = () => {
                   <p className="text-[11px] text-slate-400 font-mono truncate mt-0.5">
                     轄區：{previewStation.district} | 負載：
                     {previewStation.load || '-'} | 最後更新日期：
-                    {previewStation.version || '-'}
+                    {previewStation.updatedAt || '-'}
                   </p>
                 </div>
               </div>
@@ -936,8 +1027,8 @@ export const SubstationView: FC = () => {
               onSubmit={(e) => void handleSaveStation(e)}
               className="p-4 sm:p-5 space-y-4"
             >
-              {/* 第一列：變電站名稱、電壓等級、最後更新日期 */}
-              <div className="grid grid-cols-3 gap-2 sm:gap-3.5">
+              {/* 第一列：變電站名稱、電壓等級、最後更新日期 (updatedAt) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="col-span-1">
                   <label
                     htmlFor="editStationNameInput"
@@ -979,29 +1070,29 @@ export const SubstationView: FC = () => {
                 </div>
                 <div className="col-span-1">
                   <label
-                    htmlFor="editVersionInput"
+                    htmlFor="editUpdatedAtInput"
                     className="block text-xs font-semibold text-slate-700 mb-1 truncate"
                   >
                     最後更新日期 *
                   </label>
                   <input
-                    id="editVersionInput"
+                    id="editUpdatedAtInput"
                     type="text"
                     inputMode="numeric"
                     required
-                    value={editVersion}
+                    value={editUpdatedAt}
                     onChange={(e) =>
-                      setEditVersion(sanitizeVersionInput(e.target.value))
+                      setEditUpdatedAt(sanitizeVersionInput(e.target.value))
                     }
-                    placeholder="請輸入PDF更新日期"
-                    title="僅限輸入數字與符號"
+                    placeholder="例如：2026-11-25"
+                    title="僅限輸入日期數字與符號"
                     className="w-full px-2.5 py-2 text-xs sm:text-sm border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-sky-500 focus:outline-none"
                   />
                 </div>
               </div>
 
               {/* 第二列：轄區 (1格寬)、負載 (2格寬) */}
-              <div className="grid grid-cols-3 gap-2 sm:gap-3.5">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="col-span-1">
                   <label
                     htmlFor="editDistrictInput"
@@ -1023,7 +1114,7 @@ export const SubstationView: FC = () => {
                     ))}
                   </select>
                 </div>
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <label
                     htmlFor="editLoadInput"
                     className="block text-xs font-semibold text-slate-700 mb-1 truncate"

@@ -102,6 +102,7 @@ test('substationData creates 42 default stations with real PDF filenames and res
     toSafePdfFileName,
     toCompactPdfFileName,
     getPdfCandidateFileNames,
+    normalizeUpdatedAt,
     filterSubstations,
     generateSingleLinePdfBytes,
   } = await import('./substationData');
@@ -109,11 +110,17 @@ test('substationData creates 42 default stations with real PDF filenames and res
   assert.equal(toSafePdfFileName('2KB 1/2'), '2KB 1-2.pdf');
   assert.equal(toCompactPdfFileName('2KB 1/2'), '2KB12.pdf');
   assert.equal(toCompactPdfFileName('L2 MS.pdf'), 'L2MS.pdf');
+  assert.equal(normalizeUpdatedAt('2026-11-01'), '2026-11-01');
+  assert.equal(
+    normalizeUpdatedAt({ toDate: () => new Date('2026-11-25T00:00:00Z') }),
+    '2026-11-25'
+  );
 
   const stations = createDefaultStations();
   assert.equal(stations.length, 42);
   assert.equal(stations[0].name, '2KB 1/2');
   assert.equal(stations[0].pdfFileName, '2KB12.pdf');
+  assert.equal(stations[0].updatedAt, '2026-11-01');
   assert.equal(stations[0].voltage, '11 kV');
   assert.equal(stations[1].voltage, '480 V');
 
@@ -129,6 +136,14 @@ test('substationData creates 42 default stations with real PDF filenames and res
     district: 'ALL',
   });
   assert.equal(byVoltage.length, 21);
+
+  const byUpdatedAt = filterSubstations(stations, {
+    keyword: '2026-11-01',
+    voltage: 'ALL',
+    district: 'ALL',
+  });
+  assert.ok(byUpdatedAt.length >= 1);
+  assert.equal(byUpdatedAt[0].updatedAt, '2026-11-01');
 
   const byKeyword = filterSubstations(stations, {
     keyword: '2KB',

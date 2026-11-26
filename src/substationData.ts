@@ -193,6 +193,7 @@ export const filterSubstations = (
 
   return stations.filter((st) => {
     const loadStr = (st.load || '').toLowerCase();
+    const updatedAtStr = String(st.updatedAt || '').toLowerCase();
     const versionStr = String(st.version || '').toLowerCase();
     const pdfStr = (st.pdfFileName || '').toLowerCase();
     const matchKeyword =
@@ -201,6 +202,7 @@ export const filterSubstations = (
       st.district.toLowerCase().includes(kw) ||
       loadStr.includes(kw) ||
       pdfStr.includes(kw) ||
+      updatedAtStr.includes(kw) ||
       versionStr.includes(kw);
 
     const matchVoltage =
@@ -218,7 +220,7 @@ export const filterSubstations = (
 export const generateSingleLinePdfBytes = (
   station: SubstationItem
 ): Uint8Array => {
-  const pdfUpdateDate = station.version || '-';
+  const pdfUpdateDate = station.updatedAt || '-';
   const streamLines = [
     'BT',
     '/F1 16 Tf',
@@ -329,7 +331,7 @@ export const drawSingleLineDiagramToCanvas = (
 
   ctx.fillStyle = '#334155';
   ctx.font = '11px "JetBrains Mono", monospace';
-  ctx.fillText(`PDF Last Updated: ${station.version || '-'}`, 50, 96);
+  ctx.fillText(`PDF Last Updated: ${station.updatedAt || '-'}`, 50, 96);
   ctx.fillText(`PDF Path: ./pdfs/${station.pdfFileName}`, 50, 116);
   ctx.fillText(
     `District: ${station.district}   |   Load: ${station.load || '-'}`,
@@ -420,13 +422,34 @@ export const drawSingleLineDiagramToCanvas = (
   ctx.font = '10px "JetBrains Mono", monospace';
   ctx.fillText(`STATION : ${station.name}`, 322, 740);
   ctx.fillText(`VOLTAGE : ${station.voltage}`, 322, 756);
-  ctx.fillText(`UPDATED : ${station.version || '-'}`, 322, 772);
+  ctx.fillText(`UPDATED : ${station.updatedAt || '-'}`, 322, 772);
 
   ctx.restore();
 };
 
 /**
- * 從 localStorage 讀取變電站資料（若無則初始化 20 筆預設資料）
+ * 將任意型別的 updatedAt（字串、Firestore Timestamp 或數字時間戳）安全正規化為顯示字串
+ */
+export const normalizeUpdatedAt = (val: unknown): string => {
+  if (val === undefined || val === null) return '';
+  if (typeof val === 'string') return val.trim();
+  if (typeof val === 'number' && Number.isFinite(val)) {
+    return new Date(val).toISOString().slice(0, 10);
+  }
+  if (typeof val === 'object') {
+    const maybeTs = val as { seconds?: number; toDate?: () => Date };
+    if (typeof maybeTs.toDate === 'function') {
+      return maybeTs.toDate().toISOString().slice(0, 10);
+    }
+    if (typeof maybeTs.seconds === 'number') {
+      return new Date(maybeTs.seconds * 1000).toISOString().slice(0, 10);
+    }
+  }
+  return String(val).trim();
+};
+
+/**
+ * 從 localStorage 讀取變電站資料（若無則初始化 42 筆預設資料）
  */
 export const loadLocalSubstations = (): SubstationItem[] => {
   try {
@@ -451,7 +474,7 @@ export const loadLocalSubstations = (): SubstationItem[] => {
       load: st.load !== undefined && st.load !== '' ? st.load : '-',
       voltage: (st.voltage as VoltageLevel) || '11 kV',
       version: st.version !== undefined ? String(st.version) : '1.0',
-      updatedAt: st.updatedAt || '',
+      updatedAt: normalizeUpdatedAt(st.updatedAt),
       pdfFileName: st.pdfFileName || toSafePdfFileName(st.name || 'station'),
     }));
   } catch {
@@ -542,18 +565,30 @@ export const subscribeSubstations = (
         } else {
           const remoteStations: SubstationItem[] = snapshot.docs.map(
             (d, idx) => {
-              const raw = d.data() as Partial<SubstationItem>;
-              const name = raw.name || `Station ${idx + 1}`;
+              const raw = d.data() as Record<string, unknown>;
+              const name =
+                typeof raw.name === 'string' && raw.name
+                  ? raw.name
+                  : `Station ${idx + 1}`;
               return {
-                id: raw.id || d.id,
+                id: typeof raw.id === 'string' && raw.id ? raw.id : d.id,
                 order: typeof raw.order === 'number' ? raw.order : idx + 1,
                 name,
-                district: raw.district || DEFAULT_DISTRICTS[0],
-                load: raw.load !== undefined && raw.load !== '' ? raw.load : '-',
+                district:
+                  typeof raw.district === 'string' && raw.district
+                    ? raw.district
+                    : DEFAULT_DISTRICTS[0],
+                load:
+                  raw.load !== undefined && String(raw.load) !== ''
+                    ? String(raw.load)
+                    : '-',
                 voltage: (raw.voltage as VoltageLevel) || '11 kV',
                 version: raw.version !== undefined ? String(raw.version) : '',
-                updatedAt: raw.updatedAt || '',
-                pdfFileName: raw.pdfFileName || toSafePdfFileName(name),
+                updatedAt: normalizeUpdatedAt(raw.updatedAt),
+                pdfFileName:
+                  typeof raw.pdfFileName === 'string' && raw.pdfFileName
+                    ? raw.pdfFileName
+                    : toSafePdfFileName(name),
               };
             }
           );
